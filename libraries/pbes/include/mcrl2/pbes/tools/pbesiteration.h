@@ -16,6 +16,7 @@
 #define MCRL2_PBES_TOOLS_PBESITERATION_H
 
 #include "mcrl2/data/detail/prover/bdd_prover.h"
+#include "mcrl2/data/detail/prover/smt2_lib_solver.h"
 #include "mcrl2/pbes/algorithms.h"
 #include "mcrl2/pbes/io.h"
 #include "mcrl2/pbes/pbes_expression.h"
@@ -278,6 +279,8 @@ InvResult global_invariant_check(pbes_equation& equation,
       pbes_rewriter);
 
   mcrl2::data::detail::BDD_Prover f_bdd_prover(data_spec, data::used_data_equation_selector(data_spec));
+          auto f_smt_solver = new mcrl2::data::detail::prover::z3_smt2_solver();
+//  mcrl2::data::detail::z3_smt_solver m_smt_solver(data_spec);
   mCRL2log(log::verbose) << "INV: PVI set size " << set.size() << "\n";
   int i = 0;
   for (propositional_variable_instantiation pvi : set)
@@ -327,15 +330,17 @@ InvResult global_invariant_check(pbes_equation& equation,
     }
 
     // Check CC and C_i implies CC_i
-    data::data_expression bdd_expr = data::imp(c_i_data, cc_i_data);
+    data::data_expression bdd_expr =data::imp(c_i_data, cc_i_data);
     // Add exists
-    for (const data::variable& v : global_variables)
-    {
-      bdd_expr = make_exists_(data::variable_list({v}), bdd_expr);
-    }
+//    for (const data::variable& v : global_variables)
+//    {
+//      bdd_expr = make_exists_(data::variable_list({v}), bdd_expr);
+//    }
 
     f_bdd_prover.set_formula(bdd_expr);
     mCRL2log(log::verbose) << "INV?: " << std::endl;
+    bool asdf = f_smt_solver->is_satisfiable({ data::not_(bdd_expr)});
+    mCRL2log(log::info) << "INV?: " << asdf << std::endl;
 
     data::detail::Answer v_is_tautology = f_bdd_prover.is_tautology();
     data::detail::Answer v_is_contradiction = f_bdd_prover.is_contradiction();
@@ -442,7 +447,6 @@ struct pbesiteration_pbes_fixpoint_iterator
     for (std::vector<pbes_equation>::reverse_iterator i = p.equations().rbegin(); i != p.equations().rend(); i++)
     {
       mCRL2log(log::verbose) << "Investigating the equation for " << i->variable().name() << "\n";
-      //  Turn this into a option flag
       if (options.check_global_invariant)
       {
         InvResult global_inv = global_invariant_check(*i,

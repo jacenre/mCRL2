@@ -10,6 +10,7 @@ mcrl2_add_library(mcrl2_data
     source/machine_word.cpp
     source/typecheck.cpp
     source/detail/prover/smt_lib_solver.cpp
+    source/detail/prover/smt2_lib_solver.cpp
     source/detail/rewrite/jitty.cpp
     source/detail/rewrite/rewrite.cpp
     source/detail/rewrite/strategy.cpp

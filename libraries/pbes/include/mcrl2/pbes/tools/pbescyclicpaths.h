@@ -15,15 +15,10 @@
 #ifndef MCRL2_PBES_TOOLS_PBESCYCLICPATHS_H
 #define MCRL2_PBES_TOOLS_PBESCYCLICPATHS_H
 
-#include "mcrl2/data/detail/prover/bdd_prover.h"
 #include "mcrl2/pbes/algorithms.h"
 #include "mcrl2/pbes/detail/stategraph_pbes.h"
 #include "mcrl2/pbes/io.h"
 #include "mcrl2/pbes/rewriter.h"
-#include "mcrl2/pbes/srf_pbes.h"
-
-#include <map>
-#include <optional>
 
 namespace mcrl2
 {
@@ -62,10 +57,10 @@ void perform_iteration(detail::stategraph_equation& equation,
 {
   simplify_data_rewriter<data::rewriter> pbes_rewriter(data_rewriter);
   true_substituter_builder<pbes_system::pbes_expression_builder> true_substituter(pbes_rewriter);
-    for (detail::predicate_variable& Ye : equation.predicate_variables())
-    {
-      Ye.simplify_guard();
-    }
+  for (detail::predicate_variable& Ye : equation.predicate_variables())
+  {
+    Ye.simplify_guard();
+  }
   equation.compute_source_target_copy(data_rewriter);
 
   // Chi
@@ -73,117 +68,99 @@ void perform_iteration(detail::stategraph_equation& equation,
   true_substituter.apply(chi, equation.formula());
   chi = pbes_rewrite(chi, pbes_rewriter); // simplify
 
-  mCRL2log(log::info) << chi << " is chi  " << std::endl;
+  mCRL2log(log::debug) << chi << " is chi  " << std::endl;
   std::set<data::variable> var_list = as_set(equation.variable().parameters());
 
   // Remove all vars that occur in chi
   std::set<data::variable> temp_var_list = var_list;
   for (const data::variable& var : temp_var_list)
   {
-    mCRL2log(log::info) << var << std::endl;
-    bool occurs_in_chi = search_variable(chi, var);
-    if (occurs_in_chi)
+    mCRL2log(log::debug) << var << std::endl;
+    if (search_variable(chi, var))
     {
       var_list.erase(var);
     }
   }
   for (const data::variable& var : var_list)
   {
-    mCRL2log(log::info) << var << " is a var " << std::endl;
+    mCRL2log(log::debug) << var << " is a var " << std::endl;
   }
 
-  mcrl2::data::detail::BDD_Prover f_bdd_prover(data_spec, data::used_data_equation_selector(data_spec));
   temp_var_list = var_list;
   bool stable = false;
-  auto  predvars = equation.predicate_variables();
+  auto predvars = equation.predicate_variables();
   while (!stable)
   {
-    // mCRL2log(log::info) << equation.variable().name() << ":  " << std::endl;
     stable = true;
 
     for (detail::predicate_variable& Ye : predvars)
     {
-      // data::search_variable
       // Check if (1) parameter occurs guard of Ye != X
       // or (2) in the guard of a Ye where non-irr vars are changed
-      // or (3) in the calculation of the relevant paramters
+      // or (3) in the calculation of the relevant parameters
 
       auto parameters = Ye.parameters();
 
+      // (1)
+      mCRL2log(log::debug) << "(1)" << std::endl;
       for (const data::variable& var : temp_var_list)
       {
-        // (1)
-        mCRL2log(log::info) << "(1)" << std::endl;
         if (Ye.variable().name() != equation.variable().name() && search_variable(Ye.guard(), var))
         {
           var_list.erase(var);
+          stable = false;
         }
       }
-      mCRL2log(log::info) << "- - - - - - - - - - - - - - - " << std::endl;
-      // (2)
-      mCRL2log(log::info) << Ye << std::endl;
-      for (const auto& j : Ye.copy())
-      {
-        mCRL2log(log::info) << "        copy(" << j.first << ") = " << j.second << std::endl;
-      }
-      // auto temp_guard = pbes_rewrite(Ye.guard(), pbes_rewriter);
-      mCRL2log(log::info) << "        guard    = " << pp(Ye.guard()) << std::endl;
-      mCRL2log(log::info) << "        guard2    = " << pp(Ye.guard()) << std::endl;
-      mCRL2log(log::info) << "        used    = " << core::detail::print_set(Ye.used()) << std::endl;
-      mCRL2log(log::info) << "        changed = " << core::detail::print_set(Ye.changed()) << std::endl;
+
+      // (Intermezzo): Check syntactic equivalence source and target
+      std::set<std::size_t> Ye_changed = Ye.changed();
+      mCRL2log(log::debug) << "Ye_changed: " << core::detail::print_set(Ye_changed) << std::endl;
+
       for (const auto& j : Ye.source())
       {
-        mCRL2log(log::info) << "        source(" << j.first << ") = " << j.second << std::endl;
-      }
-      for (const auto& j : Ye.target())
-      {
-        mCRL2log(log::info) << "        target(" << j.first << ") = " << j.second << std::endl;
-      }
-
-      for (std::size_t i = 0, e = equation.parameters().size(); i != e; ++i)
-      {
-        mCRL2log(log::info) << "- - - - - - - - - - - - - - - " << std::endl;
-        const data::variable& var = equation.parameters()[i];
-        std::set<std::size_t> Ye_changed = Ye.changed();
-        if (auto search = Ye_changed.find(i); search != Ye_changed.end())
+        if (auto search = Ye.target().find(j.first); search != Ye.target().end())
         {
-          // TODO: If a contradiction, then it is not changed! We should consider that for (2) and (3)
-          // If this is unsatisfiable, then we know it is a "copy"
-          mCRL2log(log::info) << Ye.guard() << std::endl;
-          mCRL2log(log::info) << *search << std::endl;
-          mCRL2log(log::debug) << "parameters.size() = " << parameters << std::endl;
-          mCRL2log(log::debug) << "parameters.size() = " << parameters.size() << std::endl;
-          if (parameters[*search].defined())
+          if (j.second == search->second)
           {
-            mCRL2log(log::debug) << "parameters[" << *search << "] = " << parameters[*search] << std::endl;
-          }
-
-          if (!parameters[*search].defined() || !data::is_application(parameters[*search]))
-          {
-            continue;
-          }
-          mCRL2log(log::info) << parameters[i] << std::endl;
-          pbes_expression spec_guard = and_(Ye.guard(), data::not_equal_to(data::application(parameters[i]), var));
-
-          mCRL2log(log::info) << spec_guard << std::endl;
-          spec_guard = pbes_rewrite(spec_guard, pbes_rewriter); // simplify
-
-          data::data_expression data_spec_guard
-              = atermpp::down_cast<data::data_expression>(detail::pbes2data(spec_guard));
-          f_bdd_prover.set_formula(data_spec_guard);
-          data::detail::Answer v_is_contradiction = f_bdd_prover.is_contradiction();
-          if (v_is_contradiction == data::detail::answer_yes)
-          {
-            mCRL2log(log::verbose) << "A contradiction, so " << i << " " << var << "is unchanged" << std::endl;
-            Ye_changed.erase(i);
+            Ye_changed.erase(j.first);
           }
         }
-
-        mCRL2log(log::info) << "Ye_changed: " << core::detail::print_set(Ye_changed) << std::endl;
-        mCRL2log(log::info) << "- - - - - - - - - - - - - - - " << std::endl;
       }
+
+      mCRL2log(log::debug) << "Ye_changed: " << core::detail::print_set(Ye_changed) << std::endl;
+
+      mCRL2log(log::debug) << Ye.print() << std::endl;
+
+      // (2)
+      mCRL2log(log::debug) << "(2)" << std::endl;
+
+      temp_var_list = var_list;
+      for (const data::variable& var : temp_var_list)
+      {
+        // If var is in the guard
+        if (search_variable(Ye.guard(), var))
+        {
+          mCRL2log(log::debug) << "var " << var << " in " << Ye.guard() << std::endl;
+          // Then all Ye_changed should be found in var_list
+          for (std::size_t changed_i : Ye_changed) {
+            const data::variable& var2 = equation.parameters()[changed_i];
+            if (auto search = var_list.find(var2); search == var_list.end()) {
+              mCRL2log(log::debug) << "Remove " << var << " since " << var2 << " changed here " << std::endl;
+              var_list.erase(var);
+              stable = false;
+            }
+          }
+        }
+      }
+
+      // (3) TODO
+      mCRL2log(log::debug) << "(3)" << std::endl;
+
+      mCRL2log(log::debug) << "- - - - - - - - - - - - - - - " << std::endl;
     }
   }
+
+  mCRL2log(log::info) << "Irrelevant parameters are " << core::detail::print_set(var_list) << std::endl;
 }
 
 struct pbescyclicpaths_pbes_fixpoint_iterator

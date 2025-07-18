@@ -218,7 +218,8 @@ std::vector<propositional_variable_instantiation> get_propositional_variable_ins
 }
 
 std::set<propositional_variable_instantiation> filter_pvis(const propositional_variable_instantiation& needle,
-    const std::vector<propositional_variable_instantiation>& haystack)
+    const std::vector<propositional_variable_instantiation>& haystack,
+    bool apply_magic = false)
 {
   std::set<propositional_variable_instantiation> result;
 
@@ -227,6 +228,8 @@ std::set<propositional_variable_instantiation> filter_pvis(const propositional_v
       std::inserter(result, result.end()),
       [&](const propositional_variable_instantiation& v)
       {
+        if (!apply_magic)
+          return v == needle;
         if (v.name() != needle.name())
           return false;
 
@@ -238,8 +241,7 @@ std::set<propositional_variable_instantiation> filter_pvis(const propositional_v
 
         for (std::size_t i = 0; i < v_params.size(); ++i)
         {
-          if (v_params[i] != needle_params[i])
-          // if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
+          if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
           {
             return false;
           }
@@ -252,12 +254,15 @@ std::set<propositional_variable_instantiation> filter_pvis(const propositional_v
 }
 
 inline bool pvi_in_set(const propositional_variable_instantiation needle,
-    const std::set<propositional_variable_instantiation> haystack)
+    const std::set<propositional_variable_instantiation> haystack,
+    bool apply_magic = false)
 {
   return std::any_of(haystack.begin(),
       haystack.end(),
       [&](const propositional_variable_instantiation& v)
       {
+        if (!apply_magic)
+          return v == needle;
         if (v.name() != needle.name())
           return false;
 
@@ -269,8 +274,7 @@ inline bool pvi_in_set(const propositional_variable_instantiation needle,
 
         for (size_t i = 0; i < v_params.size(); i++)
         {
-          if (v_params[i] != needle_params[i])
-          // if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
+          if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
           {
             return false;
           }
@@ -332,6 +336,31 @@ inline pbes_expression simplify_expr(pbes_expression& phi,
       return res;
     }
   }
+  return phi;
+}
+
+inline pbes_expression check_trivially_true(pbes_equation& equation,
+    const pbes_expression& phi,
+    propositional_variable_instantiation& cur_x,
+    simplify_quantifiers_data_rewriter<data::rewriter>& pbes_rewriter,
+    substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder>& pvi_substituter)
+{
+  pbes_expression invariant = phi;
+  std::vector<propositional_variable_instantiation> phi_vector = get_propositional_variable_instantiations(phi);
+  auto gauss_set = filter_pvis(cur_x, phi_vector, true);
+  for (auto gauss_pvi : gauss_set)
+  {
+    pvi_substituter.set_pvi(gauss_pvi);
+    pvi_substituter.set_replacement(equation.symbol().is_nu() ? true_() : false_());
+    pvi_substituter.apply(invariant, invariant);
+  }
+  invariant = pbes_rewrite(invariant, pbes_rewriter);
+  if (invariant == true_())
+  {
+    mCRL2log(log::verbose) << "Invariant is trivially true " << phi << std::endl;
+    return invariant;
+  }
+  mCRL2log(log::debug) << "Invariant is not trivially true " << phi << "\n" << cur_x << "\n" << invariant << std::endl;
   return phi;
 }
 
@@ -411,8 +440,9 @@ inline void self_substitute(pbes_equation& equation,
         }
 
         // Simplify
-
         phi = simplify_expr(phi, options, if_substituter, replace_substituter, pbes_rewriter, f_bdd_prover);
+
+        phi = check_trivially_true(equation, phi, cur_x, pbes_rewriter, pvi_substituter);
         phi_vector = get_propositional_variable_instantiations(phi);
         int size = phi_vector.size();
         if (options.count_unique_pvi)
@@ -583,10 +613,10 @@ struct pbespathreduction_pbes_backward_substituter
     substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder> pvi_substituter(
         pbes_rewriter);
 
-    if (options.fill_pvi){
-        p = stategraph_and_back(p, data_rewriter);
+    if (options.fill_pvi)
+    {
+      p = stategraph_and_back(p, data_rewriter);
     }
-
 
     mcrl2::data::detail::BDD_Prover f_bdd_prover(p.data(),
         data::used_data_equation_selector(p.data()),

@@ -42,6 +42,8 @@ struct pbespathreduction_options
   double bdd_timeout = 0.25;
   bool back_substitution = true;
   int max_depth = 15;
+  bool count_unique_pvi = false;
+  bool fill_pvi = false;
 };
 
 template <template <class> class Builder>
@@ -208,8 +210,7 @@ struct substitute_propositional_variables_builder : public Builder<substitute_pr
 /// \param[in] container a container with expressions
 /// \return All data variables that occur in the term t
 template <typename Container>
-std::vector<propositional_variable_instantiation> count_propositional_variable_instantiations(
-    Container const& container)
+std::vector<propositional_variable_instantiation> get_propositional_variable_instantiations(Container const& container)
 {
   std::vector<propositional_variable_instantiation> result;
   pbes_system::find_propositional_variable_instantiations(container, std::inserter(result, result.end()));
@@ -314,7 +315,7 @@ inline pbes_expression simplify_expr(pbes_expression& phi,
     simplify_quantifiers_data_rewriter<data::rewriter>& pbes_rewriter,
     mcrl2::data::detail::BDD_Prover& f_bdd_prover)
 {
-  std::vector<propositional_variable_instantiation> phi_vector = count_propositional_variable_instantiations(phi);
+  std::vector<propositional_variable_instantiation> phi_vector = get_propositional_variable_instantiations(phi);
   if (phi_vector.size() < 50)
   {
     if (options.use_bdd_simplifier)
@@ -351,7 +352,7 @@ inline void self_substitute(pbes_equation& equation,
     stable = true;
     std::set<propositional_variable_instantiation> stable_set = {}; // To record pvi that have reach a max depth
     std::vector<propositional_variable_instantiation> set
-        = count_propositional_variable_instantiations(equation.formula());
+        = get_propositional_variable_instantiations(equation.formula());
     for (propositional_variable_instantiation x : set)
     {
       if (equation.variable().name() != x.name())
@@ -389,7 +390,7 @@ inline void self_substitute(pbes_equation& equation,
         }
         pbes_expression phi = pbes_rewrite(equation.formula(), pbes_default_rewriter, sigma);
 
-        std::vector<propositional_variable_instantiation> phi_vector = count_propositional_variable_instantiations(phi);
+        std::vector<propositional_variable_instantiation> phi_vector = get_propositional_variable_instantiations(phi);
 
         // (2) replace all reoccuring with true (nu) and false (mu)
         auto gauss_set = filter_pvis(cur_x, phi_vector);
@@ -412,10 +413,19 @@ inline void self_substitute(pbes_equation& equation,
         // Simplify
 
         phi = simplify_expr(phi, options, if_substituter, replace_substituter, pbes_rewriter, f_bdd_prover);
-        phi_vector = count_propositional_variable_instantiations(phi);
+        phi_vector = get_propositional_variable_instantiations(phi);
+        int size = phi_vector.size();
+        if (options.count_unique_pvi)
+        {
+          size = std::set(phi_vector.begin(), phi_vector.end()).size();
+          if (size != phi_vector.size() && size != 1)
+          {
+            mCRL2log(log::error) << "Duplicate propositional variable instantiations found: " << size << " vs " << phi_vector.size() << "\n";
+          }
+        }
 
         // (3) check if simpler
-        if (phi_vector.size() == 1 && (*phi_vector.begin()).name() == equation.variable().name())
+        if (size == 1 && (*phi_vector.begin()).name() == equation.variable().name())
         {
           propositional_variable_instantiation new_x = *phi_vector.begin();
 
@@ -456,7 +466,7 @@ inline void self_substitute(pbes_equation& equation,
             path.insert(new_x);
           }
         }
-        else if (phi_vector.size() == 0)
+        else if (size == 0)
         {
           pvi_substituter.set_pvi(cur_x);
           pvi_substituter.set_replacement(phi);
@@ -494,9 +504,9 @@ inline void self_substitute(pbes_equation& equation,
 
       // if_substituter.apply(equation.formula(), equation.formula());
       std::vector<propositional_variable_instantiation> set
-          = count_propositional_variable_instantiations(equation.formula());
+          = get_propositional_variable_instantiations(equation.formula());
 
-      mCRL2log(log::verbose) << "New set size: " << set.size() << "\n";
+      mCRL2log(log::verbose) << "New number of pvi: " << set.size() << "\n";
 
       // Simplify
       if (!options.use_bdd_simplifier)
@@ -557,7 +567,6 @@ inline pbes stategraph_and_back(pbes& p, data::rewriter data_rewriter)
 
   // Back to pbes
   pbes res(p.data(), p.global_variables(), eqn, p.initial_state());
-  mCRL2log(log::verbose) << res <<"\n";
   return res;
 }
 
@@ -578,10 +587,10 @@ struct pbespathreduction_pbes_backward_substituter
     substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder> pvi_substituter(
         pbes_rewriter);
 
-    // TODO: Turn this into an option
-    p = stategraph_and_back(p, data_rewriter);
-    
-    // TODO: SET vs vector to count as an option 
+    if (options.fill_pvi){
+        p = stategraph_and_back(p, data_rewriter);
+    }
+
 
     mcrl2::data::detail::BDD_Prover f_bdd_prover(p.data(),
         data::used_data_equation_selector(p.data()),

@@ -16,12 +16,17 @@
 #define MCRL2_PBES_TOOLS_PBESPATHREDUCTION_H
 
 #include "mcrl2/data/detail/prover/bdd_prover.h"
+#include "mcrl2/data/rewriter.h"
 #include "mcrl2/pbes/algorithms.h"
 #include "mcrl2/pbes/detail/iteration_builders.h"
+#include "mcrl2/pbes/detail/stategraph_pbes.h"
 #include "mcrl2/pbes/io.h"
+#include "mcrl2/pbes/pbes_equation.h"
+#include "mcrl2/pbes/pbes_expression.h"
 #include "mcrl2/pbes/rewrite.h"
 #include "mcrl2/pbes/rewriters/data2pbes_rewriter.h"
 #include "mcrl2/pbes/rewriters/pbes2data_rewriter.h"
+#include "mcrl2/utilities/logger.h"
 #include <cstddef>
 
 namespace mcrl2
@@ -37,6 +42,31 @@ struct pbespathreduction_options
   double bdd_timeout = 0.25;
   bool back_substitution = true;
   int max_depth = 15;
+};
+
+template <template <class> class Builder>
+struct substitute_propositional_variables_i_builder
+    : public Builder<substitute_propositional_variables_i_builder<Builder>>
+{
+  typedef Builder<substitute_propositional_variables_i_builder<Builder>> super;
+  using super::apply;
+
+  simplify_data_rewriter<data::rewriter> m_pbes_rewriter;
+  std::vector<detail::predicate_variable> predvars;
+  int i = 0;
+
+  explicit substitute_propositional_variables_i_builder(simplify_data_rewriter<data::rewriter>& r,
+      std::vector<detail::predicate_variable> predvars)
+      : m_pbes_rewriter(r),
+        predvars(predvars)
+  {}
+
+  template <class T>
+  void apply(T& result, const propositional_variable_instantiation& x)
+  {
+    result = pbes_rewrite(pbes_expression(x), m_pbes_rewriter, predvars[i].sigma());
+    i++;
+  }
 };
 
 // Substitutor to target specific path, replace our specific pvi with true/false
@@ -494,6 +524,43 @@ inline void substitute(pbes_equation& into,
   into.formula() = p;
 }
 
+// Convert to stategraph and back
+inline pbes stategraph_and_back(pbes& p, data::rewriter data_rewriter)
+{
+  detail::stategraph_pbes stategraph(p, data_rewriter);
+  simplify_data_rewriter<data::rewriter> pbes_default_rewriter(data_rewriter);
+
+  // Preparation
+  for (detail::stategraph_equation& equation : stategraph.equations())
+  {
+    for (detail::predicate_variable& predvar : equation.predicate_variables())
+    {
+      predvar.simplify_guard();
+    }
+  }
+  stategraph.compute_source_target_copy();
+
+  // Reduction
+  std::vector<pbes_equation> eqn = {};
+  for (detail::stategraph_equation& eq : stategraph.equations())
+  {
+    substitute_propositional_variables_i_builder<pbes_system::pbes_expression_builder> substituter(
+        pbes_default_rewriter,
+        eq.predicate_variables());
+
+    pbes_expression new_formula;
+    substituter.apply(new_formula, eq.formula());
+    pbes_equation new_eq(eq);
+    new_eq.formula() = new_formula;
+    eqn.push_back(new_eq);
+  }
+
+  // Back to pbes
+  pbes res(p.data(), p.global_variables(), eqn, p.initial_state());
+  mCRL2log(log::verbose) << res <<"\n";
+  return res;
+}
+
 struct pbespathreduction_pbes_backward_substituter
 {
   void run(pbes& p, pbespathreduction_options options)
@@ -510,6 +577,11 @@ struct pbespathreduction_pbes_backward_substituter
     // rewrite_if_builder<data::data_expression_builder> if_rewriter(data_rewriter);
     substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder> pvi_substituter(
         pbes_rewriter);
+
+    // TODO: Turn this into an option
+    p = stategraph_and_back(p, data_rewriter);
+    
+    // TODO: SET vs vector to count as an option 
 
     mcrl2::data::detail::BDD_Prover f_bdd_prover(p.data(),
         data::used_data_equation_selector(p.data()),

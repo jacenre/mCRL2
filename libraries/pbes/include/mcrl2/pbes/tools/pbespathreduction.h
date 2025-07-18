@@ -418,10 +418,6 @@ inline void self_substitute(pbes_equation& equation,
         if (options.count_unique_pvi)
         {
           size = std::set(phi_vector.begin(), phi_vector.end()).size();
-          if (size != phi_vector.size() && size != 1)
-          {
-            mCRL2log(log::error) << "Duplicate propositional variable instantiations found: " << size << " vs " << phi_vector.size() << "\n";
-          }
         }
 
         // (3) check if simpler

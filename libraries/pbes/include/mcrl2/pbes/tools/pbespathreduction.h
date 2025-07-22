@@ -26,6 +26,7 @@
 #include "mcrl2/pbes/rewrite.h"
 #include "mcrl2/pbes/rewriters/data2pbes_rewriter.h"
 #include "mcrl2/pbes/rewriters/pbes2data_rewriter.h"
+#include "mcrl2/smt/solver.h"
 #include "mcrl2/utilities/logger.h"
 #include <cstddef>
 
@@ -243,6 +244,8 @@ std::set<propositional_variable_instantiation> filter_pvis(const propositional_v
         {
           if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
           {
+            mCRL2log(log::debug) << "Number " << i << " is not a variable, but" << needle_params[i]
+                                   << "\n and the pvi inside has " << v_params[i] << std::endl;
             return false;
           }
         }
@@ -339,32 +342,83 @@ inline pbes_expression simplify_expr(pbes_expression& phi,
   return phi;
 }
 
-inline pbes_expression check_trivially_true(pbes_equation& equation,
+inline pbes_expression check_trivially_true(pbes& p,
+    pbes_equation& equation,
     const pbes_expression& phi,
     propositional_variable_instantiation& cur_x,
     simplify_quantifiers_data_rewriter<data::rewriter>& pbes_rewriter,
-    substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder>& pvi_substituter)
+    substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder>& pvi_substituter,
+    detail::replace_other_propositional_variables_with_functions_builder<pbes_system::pbes_expression_builder>&
+        replace_substituter)
 {
+  if (equation.symbol().is_mu())
+    return phi;
   pbes_expression invariant = phi;
   std::vector<propositional_variable_instantiation> phi_vector = get_propositional_variable_instantiations(phi);
   auto gauss_set = filter_pvis(cur_x, phi_vector, true);
   for (auto gauss_pvi : gauss_set)
   {
     pvi_substituter.set_pvi(gauss_pvi);
-    pvi_substituter.set_replacement(equation.symbol().is_nu() ? true_() : false_());
+    pvi_substituter.set_replacement(true_());
     pvi_substituter.apply(invariant, invariant);
   }
   invariant = pbes_rewrite(invariant, pbes_rewriter);
-  if (invariant == true_())
-  {
-    mCRL2log(log::verbose) << "Invariant is trivially true " << phi << std::endl;
-    return invariant;
+
+  // TODO: We could check if each instantiation has a guard that is false. Then, we also have zeor pvi.
+  // Maar dan kan je net zo goed gelijk het oplossen.
+  // std::vector<propositional_variable_instantiation> invariant_count =
+  // get_propositional_variable_instantiations(invariant); if (invariant_count.size() > 0) {
+  //     mCRL2log(log::verbose) << "We replaced " << gauss_set.size() << " variables with true, but still " <<
+  //     invariant_count.size() << " left." << std::endl; return phi;
+  // }
+
+  if (invariant == true_()) {
+      return invariant;
   }
-  mCRL2log(log::debug) << "Invariant is not trivially true " << phi << "\n" << cur_x << "\n" << invariant << std::endl;
   return phi;
+  
+  std::optional<smt::smt_solver> solv;
+  if (true)
+  {
+    solv.emplace(p.data());
+  }
+  data::variable_list var_list = equation.variable().parameters();
+  std::set<data::variable> varset = as_set(equation.variable().parameters());
+  for (auto param : find_free_variables(invariant))
+  {
+    if (auto search = varset.find(param); search == varset.end())
+    {
+      var_list.push_front(param);
+    }
+  }
+  data::data_expression formula = pbestodata(invariant, replace_substituter);
+  for (const auto& x : as_set(replace_substituter.get_variable_list()))
+  {
+    var_list.push_front(x);
+  }
+  // mCRL2log(log::verbose) << "Invariant \n" << invariant << "\n End invariant" << std::endl;
+  // mCRL2log(log::verbose) << "Formula\n" << formula << "\n End formula" << std::endl;
+  try
+  {
+    smt::answer result = solv->solve(var_list, data::not_(formula), std::chrono::seconds(0));
+    if (result == smt::answer::UNSAT)
+    {
+      mCRL2log(log::verbose) << "Invariant is trivially true " << phi << std::endl;
+      return invariant;
+    }
+    mCRL2log(log::debug) << "Invariant is not trivially true " << phi << "\n"
+                         << cur_x << "\n"
+                         << invariant << std::endl;
+    return phi;
+  }
+  catch (const std::exception& e)
+  {
+    return phi;
+  }
 }
 
-inline void self_substitute(pbes_equation& equation,
+inline void self_substitute(pbes& p,
+    pbes_equation& equation,
     substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder>& pvi_substituter,
     rewrite_if_builder<pbes_system::pbes_expression_builder>& if_substituter,
     detail::replace_other_propositional_variables_with_functions_builder<pbes_system::pbes_expression_builder>&
@@ -442,7 +496,7 @@ inline void self_substitute(pbes_equation& equation,
         // Simplify
         phi = simplify_expr(phi, options, if_substituter, replace_substituter, pbes_rewriter, f_bdd_prover);
 
-        phi = check_trivially_true(equation, phi, cur_x, pbes_rewriter, pvi_substituter);
+        phi = check_trivially_true(p, equation, phi, cur_x, pbes_rewriter, pvi_substituter, replace_substituter);
         phi_vector = get_propositional_variable_instantiations(phi);
         int size = phi_vector.size();
         if (options.count_unique_pvi)
@@ -627,7 +681,8 @@ struct pbespathreduction_pbes_backward_substituter
     for (std::vector<pbes_equation>::reverse_iterator i = p.equations().rbegin(); i != p.equations().rend(); i++)
     {
       mCRL2log(log::verbose) << "Investigating the equation for " << i->variable().name() << "\n";
-      self_substitute(*i,
+      self_substitute(p,
+          *i,
           pvi_substituter,
           if_rewriter,
           replace_substituter,

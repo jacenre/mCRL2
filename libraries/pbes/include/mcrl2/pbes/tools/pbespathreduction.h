@@ -245,7 +245,7 @@ std::set<propositional_variable_instantiation> filter_pvis(const propositional_v
           if (!(data::is_variable(needle_params[i]) || v_params[i] == needle_params[i]))
           {
             mCRL2log(log::debug) << "Number " << i << " is not a variable, but" << needle_params[i]
-                                   << "\n and the pvi inside has " << v_params[i] << std::endl;
+                                 << "\n and the pvi inside has " << v_params[i] << std::endl;
             return false;
           }
         }
@@ -364,23 +364,32 @@ inline pbes_expression check_trivially_true(pbes& p,
   }
   invariant = pbes_rewrite(invariant, pbes_rewriter);
 
-  // TODO: We could check if each instantiation has a guard that is false. Then, we also have zeor pvi.
-  // Maar dan kan je net zo goed gelijk het oplossen.
-  // std::vector<propositional_variable_instantiation> invariant_count =
-  // get_propositional_variable_instantiations(invariant); if (invariant_count.size() > 0) {
-  //     mCRL2log(log::verbose) << "We replaced " << gauss_set.size() << " variables with true, but still " <<
-  //     invariant_count.size() << " left." << std::endl; return phi;
-  // }
-
-  if (invariant == true_()) {
+  if (invariant == true_()){
+      mCRL2log(log::verbose) << "Invariant is trivially true " << phi << std::endl;
       return invariant;
   }
-  return phi;
   
+  // TODO: We could check if each instantiation has a guard that is false. Then, we also have zeor pvi.
+  // Maar dan kan je net zo goed gelijk het oplossen.
+  // std::vector<propositional_variable_instantiation> invariant_count
+  //     = get_propositional_variable_instantiations(invariant);
+  // // if (invariant_count.size() > 1)
+  // // {
+  // //   mCRL2log(log::verbose) << "We replaced " << gauss_set.size() << " variables with true, but still "
+  // //                          << invariant_count.size() << " left." << std::endl;
+  // //   return phi;
+  // // }
+  
+  bool use_smt = false;
   std::optional<smt::smt_solver> solv;
-  if (true)
+  std::optional<mcrl2::data::detail::BDD_Prover> f_bdd_prover;
+  if (use_smt)
   {
     solv.emplace(p.data());
+  }
+  else
+  {
+    f_bdd_prover.emplace(p.data(), data::used_data_equation_selector(p.data()), mcrl2::data::jitty);
   }
   data::variable_list var_list = equation.variable().parameters();
   std::set<data::variable> varset = as_set(equation.variable().parameters());
@@ -400,8 +409,17 @@ inline pbes_expression check_trivially_true(pbes& p,
   // mCRL2log(log::verbose) << "Formula\n" << formula << "\n End formula" << std::endl;
   try
   {
-    smt::answer result = solv->solve(var_list, data::not_(formula), std::chrono::seconds(0));
-    if (result == smt::answer::UNSAT)
+    bool result;
+    if (use_smt)
+    {
+      result = solv->solve(var_list, data::not_(formula), std::chrono::seconds(0)) == smt::answer::UNSAT;
+    }
+    else
+    {
+      f_bdd_prover->set_formula(formula);
+      result = f_bdd_prover->is_tautology() == data::detail::answer_yes;
+    }
+    if (result)
     {
       mCRL2log(log::verbose) << "Invariant is trivially true " << phi << std::endl;
       return invariant;

@@ -70,6 +70,66 @@ T rewrite(const T& x,
 }
 '''
 
+
+REWRITE_CAPTURE_AVOIDING_TEXT = '''/// \\\\brief Rewrites all embedded expressions in an object x
+/// \\\\param x an object containing expressions
+/// \\\\param R a rewriter
+template <typename T, typename Rewriter>
+void rewrite_capture_avoiding(T& x,
+             Rewriter R
+            )
+  requires (!std::is_base_of_v<atermpp::aterm, T>)
+{
+  data::detail::make_rewrite_data_expressions_builder<NAMESPACE::data_expression_builder>(R).update(x);
+}
+
+/// \\\\brief Rewrites all embedded expressions in an object x
+/// \\\\param x an object containing expressions
+/// \\\\param R a rewriter
+/// \\\\return the rewrite result
+template <typename T, typename Rewriter>
+T rewrite_capture_avoiding(const T& x,
+          Rewriter R
+         )
+  requires std::is_base_of_v<atermpp::aterm, T>
+{
+  T result;
+  data::detail::make_rewrite_data_expressions_builder<NAMESPACE::data_expression_builder>(R).apply(result, x);
+  return result;
+}
+
+/// \\\\brief Rewrites all embedded expressions in an object x, and applies a substitution to variables on the fly
+/// \\\\param x an object containing expressions
+/// \\\\param R a rewriter
+/// \\\\param sigma a substitution
+template <typename T, typename Rewriter, typename Substitution>
+void rewrite_capture_avoiding(T& x,
+             Rewriter R,
+             const Substitution& sigma
+            )
+  requires (!std::is_base_of_v<atermpp::aterm, T>)
+{
+  data::detail::make_rewrite_data_expressions_with_substitution_builder<NAMESPACE::data_expression_builder>(R, sigma).update(x);
+}
+
+/// \\\\brief Rewrites all embedded expressions in an object x, and applies a substitution to variables on the fly
+/// \\\\param x an object containing expressions
+/// \\\\param R a rewriter
+/// \\\\param sigma a substitution
+/// \\\\return the rewrite result
+template <typename T, typename Rewriter, typename Substitution>
+T rewrite_capture_avoiding(const T& x,
+          Rewriter R,
+          const Substitution& sigma
+         )
+  requires std::is_base_of_v<atermpp::aterm, T>
+{
+  T result; 
+  data::detail::make_rewrite_data_expressions_with_substitution_builder<NAMESPACE::data_expression_builder>(R, sigma).apply(result, x);
+  return result;
+}
+'''
+
 SUBSTITUTE_FUNCTION_TEXT = '''template <typename T, typename Substitution>
 void replace_sort_expressions(T& x,
                               const Substitution& sigma,
@@ -465,6 +525,18 @@ def generate_rewrite_functions():
     result = generate_code(MCRL2_ROOT + 'libraries/process/include/mcrl2/process/rewrite.h'            , 'process'         , 'rewrite', REWRITE_TEXT) and result
     return result
 
+def generate_rewrite_capture_avoiding_functions():
+    result = True
+    # result = generate_code(MCRL2_ROOT + 'libraries/data/include/mcrl2/data/rewrite_capture_avoiding.h'                  , 'data'            , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/lps/include/mcrl2/lps/rewrite_capture_avoiding.h'                    , 'lps'             , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/modal_formula/include/mcrl2/modal_formula/rewrite_capture_avoiding.h', 'action_formulas' , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/modal_formula/include/mcrl2/modal_formula/rewrite_capture_avoiding.h', 'regular_formulas', 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/modal_formula/include/mcrl2/modal_formula/rewrite_capture_avoiding.h', 'state_formulas'  , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    result = generate_code(MCRL2_ROOT + 'libraries/pbes/include/mcrl2/pbes/rewrite_capture_avoiding.h'                  , 'pbes_system'     , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/pres/include/mcrl2/pres/rewrite_capture_avoiding.h'                  , 'pres_system'     , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    # result = generate_code(MCRL2_ROOT + 'libraries/process/include/mcrl2/process/rewrite_capture_avoiding.h'            , 'process'         , 'rewrite_capture_avoiding', REWRITE_CAPTURE_AVOIDING_TEXT) and result
+    return result
+
 def generate_replace_functions():
     result = True
     result = generate_code(MCRL2_ROOT + 'libraries/data/include/mcrl2/data/replace.h'                  , 'data'            , 'replace', SUBSTITUTE_FUNCTION_TEXT) and result
@@ -516,6 +588,7 @@ def generate_find_functions():
 if __name__ == "__main__":
     result = True
     result = generate_rewrite_functions() and result
+    result = generate_rewrite_capture_avoiding_functions() and result
     result = generate_replace_functions() and result
     result = generate_replace_capture_avoiding_functions() and result
     result = generate_replace_capture_avoiding_with_identifier_generator_functions() and result

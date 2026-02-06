@@ -330,7 +330,7 @@ inline void self_substitute(pbes_equation& equation,
     {
       parameterNames.insert(a.name());
     }
-    size_t i = 0;
+    int i = 0;
     while (i < set.size())
     {
       const propositional_variable_instantiation& x = set[i].variable();
@@ -503,7 +503,7 @@ inline void self_substitute(pbes_equation& equation,
         {
           // mCRL2log(log::verbose) << "one_to_zero" << std::endl;
           // mCRL2log(log::verbose) << equation.formula() << std::endl;
-          // i--;
+          i--;
           detail::stategraph_equation temp(equation, data_rewriter);
           stategraph = temp;
           set = stategraph.predicate_variables();
@@ -513,6 +513,7 @@ inline void self_substitute(pbes_equation& equation,
           // }
           // mCRL2log(log::debug) << "DONE" << "\n";
           assert(pvi_done);
+          assert(!stable);
         }
         if (pvi_done)
         {

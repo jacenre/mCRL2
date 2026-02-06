@@ -172,12 +172,12 @@ struct substitute_propositional_variables_builder : public Builder<substitute_pr
             [this](const propositional_variable_instantiation& v) { return v.name() != m_eq.variable().name(); }))
       {
         // The result does not contain the variable m_eq.variable().name() and is therefore considered simpler.
-        mCRL2log(log::trace) << "Replaced in PBES equation for " << name << ":\n" << x << " --> " << p << "\n";
+        mCRL2log(log::debug) << "Replaced in PBES equation for " << name << ":\n" << x << " --> " << p << "\n";
         result = p;
         m_stable = false;
         return;
       }
-      mCRL2log(log::trace) << "No Replacement in PBES equation for " << name << ":\n" << x << " --> " << p << "\n";
+      mCRL2log(log::debug) << "No Replacement in PBES equation for " << name << ":\n" << x << " --> " << p << "\n";
       result = x;
       return;
     }
@@ -317,7 +317,7 @@ inline void self_substitute(pbes_equation& equation,
   size_t previous_size = initial_size;
   size_t current_size = initial_size;
   detail::stategraph_equation stategraph(equation, data_rewriter);
-  mCRL2log(log::trace) << "Initial stategraph " << equation.variable().name() << std::endl;
+  mCRL2log(log::debug) << "Initial stategraph " << equation.variable().name() << std::endl;
   while (!stable)
   {
     detail::stategraph_equation temp(equation, data_rewriter);
@@ -331,12 +331,10 @@ inline void self_substitute(pbes_equation& equation,
       parameterNames.insert(a.name());
     }
     size_t i = 0;
-    mCRL2log(log::trace) << "start while" << std::endl;
     while (i < set.size())
     {
       const propositional_variable_instantiation& x = set[i].variable();
       // Check timeout
-      mCRL2log(log::trace) << "1" << std::endl;
       if (options.timeout > 0.0)
       {
         std::chrono::time_point current_time = std::chrono::high_resolution_clock::now();
@@ -360,15 +358,13 @@ inline void self_substitute(pbes_equation& equation,
         i++;
         continue;
       }
-      mCRL2log(log::trace) << "2" << std::endl;
       // Check if during the substitution of the other pvi this one got cancelled out
       std::set<propositional_variable_instantiation> path = {x};
 
       propositional_variable_instantiation cur_x = x;
       pbes_expression result = x;
-      mCRL2log(log::trace) << "3" << std::endl;
 
-      mCRL2log(log::trace) << " -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n"
+      mCRL2log(log::debug) << " -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n"
                           // << "\n\nEq " << (equation.formula()) << "\n"
                           << "\n\nStart " << (cur_x) << "\n";
       bool pvi_done = false;
@@ -399,20 +395,24 @@ inline void self_substitute(pbes_equation& equation,
         auto it = find(phi_vector.begin(), phi_vector.end(), cur_x);
         if (it != phi_vector.end())
         {
-          mCRL2log(log::trace) << "Need to replace this with true/false " << pp(cur_x) << "\n";
-          mCRL2log(log::trace) << phi << "\n";
-          mCRL2log(log::trace) << equation.formula() << "\n";
+          mCRL2log(log::debug) << "Need to replace this with true/false " << pp(cur_x) << "\n";
+          mCRL2log(log::debug) << phi << "\n";
+          mCRL2log(log::debug) << equation.formula() << "\n";
 
           pvi_substituter.set_pvi(cur_x);
           pvi_substituter.set_replacement(equation.symbol().is_nu() ? true_() : false_());
           pvi_substituter.apply(phi, phi);
 
-          mCRL2log(log::trace) << phi << "\n";
+          mCRL2log(log::debug) << phi << "\n";
 
-          mCRL2log(log::trace) << "- - - - - - - - - - - - - - - - - - - - \n";
+          mCRL2log(log::debug) << "- - - - - - - - - - - - - - - - - - - - \n";
         }
 
         // Simplify
+         if (depth == 1) {
+            set[i].simplify_guard();
+            phi = imp(set[i].guard(),phi);
+        }
         phi = simplify_expr(phi, if_substituter, pbes_rewriter);
         phi_vector = get_propositional_variable_instantiations(phi);
         size_t size = phi_vector.size();
@@ -428,30 +428,30 @@ inline void self_substitute(pbes_equation& equation,
         {
           propositional_variable_instantiation new_x = *phi_vector.begin();
 
-          mCRL2log(log::trace) << "Trying loop " << new_x << " in path with \n";
+          mCRL2log(log::debug) << "Trying loop " << new_x << " in path with \n";
           for (const propositional_variable_instantiation& itr: path)
           {
-            mCRL2log(log::trace) << itr << "\n";
+            mCRL2log(log::debug) << itr << "\n";
           }
 
           if (path.contains(new_x))
           {
             // We have already seen this, so we are in a loop.
-            mCRL2log(log::trace) << "Loop, seen " << new_x << " in path after " << cur_x << "    " << phi << "\n";
+            mCRL2log(log::debug) << "Loop, seen " << new_x << " in path after " << cur_x << "    " << phi << "\n";
             for (const propositional_variable_instantiation& itr: path)
             {
-              mCRL2log(log::trace) << itr << "\n";
+              mCRL2log(log::debug) << itr << "\n";
             }
             pvi_substituter.set_pvi(new_x);
             pvi_substituter.set_replacement(equation.symbol().is_nu() ? true_() : false_());
             pvi_substituter.apply(result, phi);
 
-            mCRL2log(log::trace) << "beforei " << result << "\n";
+            mCRL2log(log::debug) << "beforei " << result << "\n";
             i_substituter.set_i(i);
             i_substituter.set_replacement(result);
             i_substituter.apply(equation.formula(), equation.formula());
 
-            mCRL2log(log::trace) << "new_phi " << result << "\n";
+            mCRL2log(log::debug) << "new_phi " << result << "\n";
             stable = false;
             pvi_done = true;
             one_to_zero = true;
@@ -459,10 +459,10 @@ inline void self_substitute(pbes_equation& equation,
           else
           {
             // The result does not contain the variable m_eq.variable().name() and is therefore considered simpler.
-            mCRL2log(log::trace) << "Replaced in PBES equation for " << cur_x << "\n-->\n"
+            mCRL2log(log::debug) << "Replaced in PBES equation for " << cur_x << "\n-->\n"
                                 << phi << "\n[" << new_x << "]\n";
 
-            mCRL2log(log::trace) << "beforei " << phi << "\n";
+            mCRL2log(log::debug) << "beforei " << phi << "\n";
             i_substituter.set_i(i);
             i_substituter.set_replacement(phi);
             i_substituter.apply(equation.formula(), equation.formula());
@@ -480,18 +480,18 @@ inline void self_substitute(pbes_equation& equation,
         }
         else if (size == 0 && is_quantifier_free(phi, options))
         {
-          mCRL2log(log::trace) << "beforei " << phi << "\n";
+          mCRL2log(log::debug) << "beforei " << phi << "\n";
           i_substituter.set_i(i);
           i_substituter.set_replacement(phi);
           i_substituter.apply(equation.formula(), equation.formula());
           stable = false;
-          mCRL2log(log::trace) << "Replaced in PBES equation for " << cur_x << ":\n" << x << " \n-->\n " << phi << "\n";
+          mCRL2log(log::debug) << "Replaced in PBES equation for " << cur_x << ":\n" << x << " \n-->\n " << phi << "\n";
           pvi_done = true;
           one_to_zero = true;
         }
         else
         {
-          mCRL2log(log::trace) << "Not simpler: " << cur_x << " \n--> size: " << phi_vector.size() << "\n " << phi
+          mCRL2log(log::debug) << "Not simpler: " << cur_x << " \n--> size: " << phi_vector.size() << "\n " << phi
                               << " and size " << phi_vector.size() << "\n";
           pvi_done = true;
           if (depth > 1)
@@ -509,16 +509,16 @@ inline void self_substitute(pbes_equation& equation,
           set = stategraph.predicate_variables();
           // for (const auto& itr: set)
           // {
-          //   mCRL2log(log::trace) << itr << "\n";
+          //   mCRL2log(log::debug) << itr << "\n";
           // }
-          // mCRL2log(log::trace) << "DONE" << "\n";
+          // mCRL2log(log::debug) << "DONE" << "\n";
           assert(pvi_done);
         }
         if (pvi_done)
         {
-          mCRL2log(log::trace) << "Nothing further to do\n";
-          mCRL2log(log::trace) << "stable? " << stable << "\n";
-          mCRL2log(log::trace) << "i? " << i << "\n";
+          mCRL2log(log::debug) << "Nothing further to do\n";
+          mCRL2log(log::debug) << "stable? " << stable << "\n";
+          mCRL2log(log::debug) << "i? " << i << "\n";
           break;
         }
         else if (depth >= options.max_depth)

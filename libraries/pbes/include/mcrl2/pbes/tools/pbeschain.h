@@ -51,7 +51,8 @@ struct pbeschain_options
   bool avoid_alternating = false;
   bool rewrite_only_substitution = false;
   double srf_factor; // factor of the maximum size the chained equation in SRF should be after chaining compared
-                     // to the size of the original equation. Default is 1.0
+                     // to the size of the original equation. Default is 1.2
+  bool guard_simplification = false;
 };
 
 // Substitutor to target specific path, replace our specific pvi with true/false
@@ -368,8 +369,8 @@ inline void self_substitute(pbes_equation& equation,
       pbes_expression result = x;
 
       mCRL2log(log::debug) << " -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n"
-                          // << "\n\nEq " << (equation.formula()) << "\n"
-                          << "\n\nStart " << (cur_x) << "\n";
+                           // << "\n\nEq " << (equation.formula()) << "\n"
+                           << "\n\nStart " << (cur_x) << "\n";
       bool pvi_done = false;
       int depth = 0;
       while (!pvi_done)
@@ -412,13 +413,38 @@ inline void self_substitute(pbes_equation& equation,
         }
 
         // Simplify
-         if (depth == 1) {
-            set[i].simplify_guard();
-            phi = imp(set[i].guard(),phi);
-        }
         phi = simplify_expr(phi, if_substituter, pbes_rewriter);
-        phi_vector = get_propositional_variable_instantiations(phi);
-        size_t size = phi_vector.size();
+        phi_vector = {};
+        size_t size = 0;
+        if (depth == 1 && options.guard_simplification)
+        {
+          // Simplify using guards
+          set[i].simplify_guard();
+
+          pbes_equation phi_eq = equation;
+          phi_eq.formula() = phi;
+          detail::stategraph_equation phi_state_eq(phi_eq, data_rewriter);
+          mCRL2log(log::debug) << " - - - -  " << "\n";
+          mCRL2log(log::debug) << " - - - -  " << "\n";
+          mCRL2log(log::debug) << "req: " << phi_state_eq.formula() << "\n";
+          for (const auto& pvi: phi_state_eq.predicate_variables())
+          {
+            pbes_expression guarded_pvi_expr = imp(set[i].guard(), imp(pvi.guard(), pvi.variable()));
+            guarded_pvi_expr = simplify_expr(guarded_pvi_expr, if_substituter, pbes_rewriter);
+            mCRL2log(log::debug) << "Guarded pvi expression: " << guarded_pvi_expr << "\n";
+            for (const auto& pvi: get_propositional_variable_instantiations(guarded_pvi_expr))
+            {
+              phi_vector.emplace_back(pvi);
+            }
+          }
+          mCRL2log(log::debug) << " - - - -  " << "\n";
+        }
+        else
+        {
+          // Directly use the pvi count
+          phi_vector = get_propositional_variable_instantiations(phi);
+        }
+        size = phi_vector.size();
         if (options.count_unique_pvi)
         {
           size = std::set(phi_vector.begin(), phi_vector.end()).size();
@@ -426,6 +452,11 @@ inline void self_substitute(pbes_equation& equation,
 
         bool one_to_zero = false;
         // (3) check if simpler
+        mCRL2log(log::debug) << "Checking if simpler: size = " << size << ", depth = " << depth
+                             << ", alternating = " << is_avoiding_alternation(options, *phi_vector.begin(), equation)
+                             << ", is_not_too_big = " << is_not_too_big(options, cur_x, phi)
+                             << ", quantifier-free = " << is_quantifier_free(phi, options) << "\n";
+
         if (size == 1 && is_avoiding_alternation(options, *phi_vector.begin(), equation)
             && is_not_too_big(options, cur_x, phi) && is_quantifier_free(phi, options))
         {
@@ -463,7 +494,7 @@ inline void self_substitute(pbes_equation& equation,
           {
             // The result does not contain the variable m_eq.variable().name() and is therefore considered simpler.
             mCRL2log(log::debug) << "Replaced in PBES equation for " << cur_x << "\n-->\n"
-                                << phi << "\n[" << new_x << "]\n";
+                                 << phi << "\n[" << new_x << "]\n";
 
             mCRL2log(log::debug) << "beforei " << phi << "\n";
             i_substituter.set_i(i);
@@ -495,7 +526,7 @@ inline void self_substitute(pbes_equation& equation,
         else
         {
           mCRL2log(log::debug) << "Not simpler: " << cur_x << " \n--> size: " << phi_vector.size() << "\n " << phi
-                              << " and size " << phi_vector.size() << "\n";
+                               << " and size " << phi_vector.size() << "\n";
           pvi_done = true;
           if (depth > 1)
           {

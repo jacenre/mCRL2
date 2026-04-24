@@ -663,8 +663,12 @@ struct pbeschain_pbes_backward_substituter
       data_default_rewriter = data_rewriter;
     }
 #endif // MCRL2_ENABLE_JITTYC
+    simplify_data_rewriter<data::rewriter> pbes_rewriter(data_rewriter);
     simplify_data_rewriter<data::rewriter> pbes_default_rewriter(data_default_rewriter);
     substitute_propositional_variables_builder<pbes_system::pbes_expression_builder> substituter(pbes_default_rewriter);
+    rewrite_if_builder<pbes_system::pbes_expression_builder> if_rewriter(pbes_default_rewriter);
+    substitute_propositional_variables_for_true_false_builder<pbes_system::pbes_expression_builder> pvi_substituter(
+      pbes_rewriter);
 
     if (options.fill_pvi)
     {

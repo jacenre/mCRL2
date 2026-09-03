@@ -35,12 +35,7 @@ if (MCRL2_ENABLE_STD_CHECKS)
   else()
     # For libc++ (the LLVM standard library, what a naming scheme) there is also a debug mode
     add_compile_definitions(_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG)
-    add_compile_definitions(_LIBCPP_ABI_BOUNDED_ITERATORS=1)
-    add_compile_definitions(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR=1)
-    add_compile_definitions(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_STRING=1)
-    add_compile_definitions(_LIBCPP_ABI_BOUNDED_UNIQUE_PTR=1)
-    add_compile_definitions(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_STD_ARRAY=1)
-    add_compile_definitions(_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS=1)    
+    add_compile_definitions(_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS=1)
   endif()
 endif()
 

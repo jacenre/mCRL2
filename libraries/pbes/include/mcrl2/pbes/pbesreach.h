@@ -1,4 +1,4 @@
-// Author(s): Wieger Wesselink
+// Author(s): Jeroen Keiren, Wieger Wesselink
 // Copyright: see the accompanying file COPYING or copy at
 // https://github.com/mCRL2org/mCRL2/blob/master/COPYING
 //
@@ -22,6 +22,7 @@
 #include "mcrl2/data/join.h"
 #include "mcrl2/pbes/detail/instantiate_global_variables.h"
 #include "mcrl2/pbes/detail/pbes_io.h"
+#include "mcrl2/pbes/detail/srf_transformations.h"
 #include "mcrl2/pbes/normalize.h"
 #include "mcrl2/pbes/pbes_summand_group.h"
 #include "mcrl2/pbes/pbes.h"
@@ -59,6 +60,8 @@ struct symbolic_reachability_options: public symbolic::symbolic_reachability_opt
   bool reset_parameters = false;
   bool aggressive = false;
   bool naive_counter_example_instantiation = false;
+  bool determinize_strategy = true; // keep a single strategy successor per vertex of the winner
+                                    // during the second (evidence) instantiation
   std::size_t solve_strategy = 0;
   std::size_t split_conditions = 0;
   std::string srf;
@@ -69,124 +72,16 @@ std::ostream& operator<<(std::ostream& out, const symbolic_reachability_options&
 {
   out << static_cast<const symbolic::symbolic_reachability_options&>(options);
   out << "solve_strategy = " << options.solve_strategy << std::endl;
+  out << "determinize_strategy = " << std::boolalpha << options.determinize_strategy << std::endl;
   out << "split_conditions = " << options.split_conditions << std::endl;
   out << "total = " << std::boolalpha << options.make_total << std::endl;
   return out;
 }
 
-inline
-pbes_system::srf_pbes split_conditions(const pbes_system::srf_pbes& pbes, std::size_t granularity)
-{
-  mCRL2log(log::debug) << "splitting conditions" << std::endl;
-
-  // Find existing identifiers.
-  data::set_identifier_generator id_generator;
-  for (const srf_equation& equation : pbes.equations())
-  {
-    id_generator.add_identifier(equation.variable().name());
-  }
-
-  // Determine the Xtrue equation.
-  pbes_system::propositional_variable Xtrue = pbes.equations()[pbes.equations().size()-2].variable();
-  pbes_system::propositional_variable Xfalse = pbes.equations()[pbes.equations().size()-1].variable();
-
-  pbes_system::srf_pbes result = pbes;
-  std::vector<srf_equation> added_equations; // These equations are added at the end of the pbes.
-  for (srf_equation& equation : result.equations())
-  {
-    std::vector<srf_summand> split_summands; // The updated summands.
-    for (const srf_summand& summand : equation.summands())
-    {
-      mCRL2log(log::debug) << "splitting summand " << summand << std::endl;
-
-      // Heuristics to determine when to split conjunctive conditions.
-      bool should_split = summand.parameters().empty() && granularity > 1; // && find_free_variables(summand.condition()).size() >= 4;
-
-      if (data::sort_bool::is_or_application(summand.condition()))
-      {
-        // For disjunctive conditions we can introduce one summand per clause.
-        for (const data::data_expression& clause : data::split_or(summand.condition()))
-        {
-          split_summands.emplace_back(summand.parameters(), atermpp::down_cast<pbes_expression>(clause), summand.variable());
-          mCRL2log(log::debug) << "Added summand " << split_summands.back() << std::endl;
-        }
-      }
-      else if (should_split && data::sort_bool::is_and_application(summand.condition()))
-      {
-        // The summand is simple if there is only a dependency on true or false.
-        bool simple = granularity == 3 || summand.variable().name() == Xtrue.name() || summand.variable().name() == Xfalse.name();
-
-        std::vector<srf_summand> split_summands_inner; // The summands for the added equation.
-        for (const data::data_expression& clause : data::split_and(summand.condition()))
-        {
-          if (simple)
-          {
-            // For conjunctive equations add !condition => Xfalse, and !condition && Xtrue otherwise.
-            split_summands_inner.emplace_back(data::variable_list(),
-                                              atermpp::down_cast<pbes_expression>(data::lazy::not_(clause)),
-                                              !equation.is_conjunctive()
-                                              ? propositional_variable_instantiation(Xtrue.name(), {}) :
-                                                propositional_variable_instantiation(Xfalse.name(), {})
-                                              );
-          }
-          else
-          {
-            // Add a new equation per clause.
-            const propositional_variable& Y = equation.variable();
-            propositional_variable Y1(id_generator(Y.name()), Y.parameters());
-
-            split_summands_inner.emplace_back(data::variable_list(), true_(), propositional_variable_instantiation(Y1.name(), data::make_data_expression_list(Y1.parameters())));
-            std::vector<srf_summand> summands;
-            summands.emplace_back(data::variable_list(), atermpp::down_cast<pbes_expression>(clause), summand.variable());
-            added_equations.emplace_back(equation.symbol(), Y1, summands, !equation.is_conjunctive());
-            mCRL2log(log::debug) << "Added equation " << added_equations.back() << std::endl;
-          }
-          mCRL2log(log::debug) << "Added summand " << split_summands_inner.back() << std::endl;
-        }
-
-        if (simple)
-        {
-          split_summands_inner.emplace_back(data::variable_list(), true_(), summand.variable());
-        }
-
-        if (equation.summands().size() == 1)
-        {
-          // Change the current equation.
-          split_summands = split_summands_inner;
-          equation.is_conjunctive() = !equation.is_conjunctive();
-          mCRL2log(log::debug) << "Changed equation type (conjunctive or disjunctive)" << std::endl;
-        }
-        else
-        {
-          // Add a new equation.
-          const propositional_variable& Y = equation.variable();
-          propositional_variable Y1(id_generator(Y.name()), Y.parameters());
-
-          split_summands.emplace_back(data::variable_list(), true_(), propositional_variable_instantiation(Y1.name(), data::make_data_expression_list(Y1.parameters())));
-          added_equations.emplace_back(equation.symbol(), Y1, split_summands_inner, !equation.is_conjunctive());
-          mCRL2log(log::debug) << "Added equation " << added_equations.back() << std::endl;
-        }
-      }
-      else
-      {
-        // Do nothing.
-        split_summands.emplace_back(summand);
-      }
-    }
-
-    equation.summands() = split_summands;
-  }
-
-  // The last two equations must be Xfalse and Xtrue.
-  result.equations().insert(result.equations().end()-2, added_equations.begin(), added_equations.end());
-
-  return result;
-}
-
-
 /// Applies necessary preprocessing steps to allow the PBES to be solved symbolically.
+template <bool use_pre_srf>
 inline
-pbes_system::srf_pbes_with_ce preprocess(pbes_system::pbes pbesspec, const symbolic_reachability_options& options)
+detail::pre_srf_pbes<use_pre_srf> preprocess(pbes_system::pbes pbesspec, const symbolic_reachability_options& options)
 {
   pbes_system::detail::instantiate_global_variables(pbesspec);
   normalize(pbesspec);
@@ -204,7 +99,12 @@ pbes_system::srf_pbes_with_ce preprocess(pbes_system::pbes pbesspec, const symbo
     pbes_system::replace_constants_by_variables(pbesspec, rewr, sigma);
   }
 
-  auto result = pbes2pre_srf(pbesspec, true);
+  detail::pre_srf_pbes<use_pre_srf> result;
+  if constexpr (use_pre_srf) {
+      result = pbes2pre_srf(pbesspec, true);
+  } else {
+      result = pbes2srf(pbesspec, true);
+  }
 
   // Unify the parameters of the original PBES (which has potential counter example information)
   unify_parameters(result, true, options.reset_parameters);

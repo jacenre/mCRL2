@@ -37,6 +37,7 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
     {
       super::parse_options(parser);
       m_options.back_substitution = !parser.has_option("no-back-substitution");
+      m_options.remove_equation = !parser.has_option("no-remove-equation");
       m_options.max_depth = parser.option_argument_as<int>("max-depth");
       m_options.count_unique_pvi = parser.has_option("count-unique-pvi");
       m_options.fill_pvi = parser.has_option("fill-pvi");
@@ -46,6 +47,10 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
       m_options.avoid_alternating = parser.has_option("avoid-alternating");
       m_options.rewrite_only_substitution = parser.has_option("rewrite-only-substitution");
       m_options.srf_factor = parser.option_argument_as<double>("srf-factor");
+      m_options.srf_split_conditions = parser.has_option("srf-split-conditions");
+      m_options.max_number_pvi = parser.option_argument_as<std::size_t>("max-number-pvi");
+      m_options.timings = m_timing_enabled;
+      m_options.disable_gauss_elimination = parser.has_option("no-gauss-elimination");
     }
 
     void add_options(interface_description& desc) override
@@ -56,6 +61,8 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
                   "of predicate variable instances in the equation is zero. "
                   "In some cases, this makes solving the equation faster. However, "
                   "less paths can be reduced.", 's');
+      desc.add_option("no-remove-equation",
+                  "Do not remove an equation after its solution has been substituted backwards.");
       desc.add_option("max-depth", utilities::make_optional_argument("DEPTH", "12"),
                   "The maximum depth a single predicate variable instances "
                   "gets unfolded. Default is 12.", 'm');
@@ -78,9 +85,15 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
                   "Do not chain if the unfolded formula contains a PVI with a different name than the current equation. So X(a) -> Y(b) is not allowed.");
       desc.add_option("rewrite-only-substitution",
                   "Do not use rewriter for any intermediate rewriting, only when substituting right-hand sides.");
-      desc.add_option("srf-factor", utilities::make_optional_argument("FACTOR", "1.0"),
-                  "Set a factor of the maximum size the chained equation in SRF should be after chaining compared to the size of the original equation. "
-                  "0 means no limit. Default is 1.0.");
+      desc.add_option("srf-factor", utilities::make_optional_argument("FACTOR", "0"),
+                   "Set a factor of the maximum size the chained equation in SRF should be after chaining compared to the size of the original equation. "
+                   "0 means no limit. Default is 0.");
+      desc.add_hidden_option("srf-split-conditions", "split disjunctive SRF conditions when checking the SRF factor");
+       desc.add_hidden_option("max-number-pvi", utilities::make_optional_argument("NUMBER", "1"),
+                   "Set the maximum number of PVI instances to chain. Default is 1.");
+       desc.add_hidden_option("no-gauss-elimination",
+                   "Disable Gauss elimination: do not replace a predicate variable instance with true/false "
+                   "when it is reoccurring or occurs in a loop.");
     }
 
   public:

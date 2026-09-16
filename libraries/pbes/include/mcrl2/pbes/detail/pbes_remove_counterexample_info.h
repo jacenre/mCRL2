@@ -23,9 +23,11 @@
 namespace mcrl2::pbes_system::detail
 {  
   
+/// \cond INTERNAL_DOCS
 static std::regex positive("Zpos_(\\d+)_.*");
 static std::regex negative("Zneg_(\\d+)_.*");
 static std::regex positive_or_negative("Z(neg|pos)_(\\d+)_.*");
+/// \endcond
 
 /// \brief Returns true iff the name is Zpos, name must be a counter example name.
 inline
@@ -42,6 +44,23 @@ bool is_counter_example_name(const core::identifier_string& name)
   std::smatch match;
   std::string name_str = name;
   return std::regex_match(name_str, match, positive_or_negative);
+}
+
+/// \brief Extracts the index embedded in a Zpos_<index>_.../Zneg_<index>_... counter example name.
+/// \param name A PBES variable name.
+/// \param index Set to the extracted index if the name matches, left unchanged otherwise.
+/// \return True iff \a name is a counter example name, in which case \a index is updated.
+inline
+bool counter_example_index(const core::identifier_string& name, std::size_t& index)
+{
+  std::smatch match;
+  std::string name_str = name;
+  if (!std::regex_match(name_str, match, positive_or_negative))
+  {
+    return false;
+  }
+  index = std::stoul(match[2]);
+  return true;
 }
 
 inline

@@ -79,6 +79,14 @@ class Tool(object):
             self.value[key1] = int(m.group(1))
             self.value[key2] = int(m.group(2))
 
+    # value[key] is a list of integers, one per occurrence of regex, in order of appearance.
+    # Use this rather than parse_number whenever a tool may report the same quantity more than once,
+    # so that a test has to say which occurrence it means instead of silently being handed the
+    # first. The key is always assigned, so an unexpected change in the tool output shows up as an
+    # empty list rather than as a missing key.
+    def parse_number_list(self, text, key, regex):
+        self.value[key] = [int(m.group(1)) for m in re.finditer(regex, text, re.MULTILINE)]
+
     # value[key] is a set of strings
     # All occurrences of regex are processed
     def parse_action(self, text, key, regex):
@@ -169,11 +177,11 @@ class Tool(object):
             name = os.path.join(self.toolpath, self.name)
         if verbose:
             print('Executing ' + ' '.join([name] + args + self.args))
-            
+
         args.extend(self.arguments())
 
         process = RunProcess(name, args + self.args, memlimit, timeout)
-   
+
         self.executed = True
         self.stdout = process.stdout
         self.stderr = process.stderr
@@ -281,10 +289,31 @@ class PbesSolveTool(Tool):
             value = None
         self.value['solution'] = value
 
+        # The sizes of the structure graphs that were built, in order of construction: pbessolve
+        # reports one per instantiation pass, pbessolvesymbolic reports only its second (evidence)
+        # pass. Both are reported in verbose mode only, so a test asserting on them must pass -v.
+        # The last entry is in all cases the graph the evidence was extracted from, which is what
+        # tests normally want, so it is also exposed on its own under a name that says so. Both keys
+        # are always assigned, so a tool that reports nothing shows up as an empty list and a None
+        # rather than as a KeyError in the result expression.
+        text_lines = self.stdout + '\n' + self.stderr
+        self.parse_number_list(text_lines, 'structure-graph-vertices',
+                               r'^Number of vertices in the structure graph: (\d+)$')
+        self.value['evidence-structure-graph-vertices'] = \
+            self.value['structure-graph-vertices'][-1] if self.value['structure-graph-vertices'] else None
+
+        # pbessolvesymbolic reports, at debug level, every equation of its second instantiation whose
+        # own variable it cannot locate in the symbolic game. That is expected to never happen: it
+        # means the two instantiations have gone out of step, which silently disables the strategy
+        # pruning and can make the evidence far larger than it should be. Only populated when
+        # --debug is passed.
+        self.parse_boolean_regexes(text_lines, 'symbolic-desync',
+                                   [r'could not be resolved to a known vertex'])
+
         # mark the evidence file as executed
         if len(self.output_nodes) == 1:
             self.output_nodes[0].value = 'executed'
-  
+
 class PresSolveTool(Tool):
     def __init__(self, label, name, toolpath, input_nodes, output_nodes, args):
         super(PresSolveTool, self).__init__(label, name, toolpath, input_nodes, output_nodes, args)
@@ -332,5 +361,5 @@ class ToolFactory(object):
             return LtscompareTool(label, name, toolpath, input_nodes, output_nodes, args)
         elif name == 'ltscombine_naive.py':
             return Tool(label, os.path.join(os.path.abspath(os.path.dirname(__file__)), '../scripts/', name), python_path, input_nodes, output_nodes, [] + args)
-    
+
         return Tool(label, name, toolpath, input_nodes, output_nodes, args)

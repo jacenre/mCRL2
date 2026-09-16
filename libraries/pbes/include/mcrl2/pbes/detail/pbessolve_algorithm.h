@@ -16,12 +16,17 @@
 #include "mcrl2/utilities/logger.h"
 #include "mcrl2/utilities/parallel_tool.h"
 #include "mcrl2/utilities/file_utility.h"
+#include "mcrl2/data/rewriter.h"
+#include "mcrl2/data/selection.h"
 #include "mcrl2/data/rewriter_tool.h"
 #include "mcrl2/lps/detail/instantiate_global_variables.h"
 #include "mcrl2/lps/io.h"
+#include "mcrl2/lts/lts_io.h"
 #include "mcrl2/pbes/pbes_input_tool.h"
 #include "mcrl2/pbes/detail/pbes_io.h"
 #include "mcrl2/pbes/detail/pbes_remove_counterexample_info.h"
+#include "mcrl2/pbes/evidence_lts.h"
+#include "mcrl2/pbes/find.h"
 #include "mcrl2/pbes/pbesinst_lazy_counter_example.h"
 #include "mcrl2/pbes/pbesinst_structure_graph2.h"
 
@@ -34,6 +39,30 @@ using mcrl2::pbes_system::tools::pbes_input_tool;
 using mcrl2::data::tools::rewriter_tool;
 using mcrl2::utilities::tools::input_tool;
 using utilities::tools::parallel_tool;
+
+/// \brief Constructs a rewriter for the given PBES, optionally restricting the
+///        rewrite rules to those that are used by the PBES.
+/// \param options The algorithm options that determine the rewrite strategy and
+///        whether unused rewrite rules are removed.
+/// \param pbesspec The PBES for which the rewriter is constructed, used both for
+///        its data specification and (if enabled) the set of used function symbols.
+/// \pre The data specification of \a pbesspec must contain every function that may
+///      be rewritten during instantiation.
+/// \return A rewriter over the data specification of \a pbesspec.
+inline
+data::rewriter construct_rewriter(const pbessolve_options& options, const pbes& pbesspec)
+{
+  if (options.remove_unused_rewrite_rules)
+  {
+    return data::rewriter(pbesspec.data(),
+                          data::used_data_equation_selector(pbesspec.data(), pbes_system::find_function_symbols(pbesspec), pbesspec.global_variables(), false),
+                          options.rewrite_strategy);
+  }
+  else
+  {
+    return data::rewriter(pbesspec.data(), options.rewrite_strategy);
+  }
+}
 
 inline
 bool run_solve(const pbes_system::pbes& pbesspec, 
@@ -53,19 +82,33 @@ bool run_solve(const pbes_system::pbes& pbesspec,
     lps::specification lpsspec;
     lps::load_lps(lpsspec, lpsfile);
     lps::detail::replace_global_variables(lpsspec, sigma);
-          
-    lps::specification evidence;
-    timer.start("solving");
-    std::tie(result, evidence) = solve_structure_graph_with_counter_example(
-        G, lpsspec, pbesspec, equation_index);
-    timer.finish("solving");
 
-    std::cout << (result ? "true" : "false") << std::endl;
     if (evidence_file.empty())
     {
       evidence_file = input_filename + ".evidence.lps";
     }
-    lps::save_lps(evidence, evidence_file);
+
+    // Guess the requested evidence format from the file extension.
+    lts::lts_type format = lts::detail::guess_format(evidence_file, false);
+    if (format == lts::lts_none)
+    {
+      lps::specification evidence;
+      timer.start("solving");
+      std::tie(result, evidence) = solve_structure_graph_with_counter_example(
+          G, lpsspec, pbesspec, equation_index);
+      timer.finish("solving");
+
+      std::cout << (result ? "true" : "false") << std::endl;
+      lps::save_lps(evidence, evidence_file);
+    }
+    else
+    {
+      timer.start("solving");
+      result = solve_structure_graph_with_evidence_lts(
+          G, lpsspec, pbesspec, equation_index, options.rewrite_strategy, format, evidence_file);
+      timer.finish("solving");
+      std::cout << (result ? "true" : "false") << std::endl;
+    }
     mCRL2log(log::verbose)
         << "Saved " << (result ? "witness" : "counter example") << " in "
         << evidence_file << std::endl;
@@ -75,11 +118,11 @@ bool run_solve(const pbes_system::pbes& pbesspec,
     lts::lts_lts_t ltsspec;
     ltsspec.load(ltsfile);
 
-    lts::lts_lts_t evidence;
     timer.start("solving");
     result = solve_structure_graph_with_counter_example(G, ltsspec);
     timer.finish("solving");
     std::cout << (result ? "true" : "false") << std::endl;
+
     if (evidence_file.empty())
     {
       evidence_file = input_filename + ".evidence.lts";
@@ -141,7 +184,11 @@ class pbessolve_tool
       desc.add_option("evidence-file",
           utilities::make_file_argument("NAME"),
           "The file to which the evidence is written. If not set, a "
-          "default name will be chosen.");
+          "default name will be chosen. If --file is an LPS and NAME has "
+          "a .lts, .aut, .fsm or .dot extension, the evidence is written "
+          "directly as a state space, without an intermediate evidence "
+          "LPS and a separate lps2lts exploration; any other extension "
+          "(or none) writes an evidence LPS, as before.");
       desc.add_option("solve-strategy",
           utilities::make_enum_argument<int>("NAME")
               .add_value_desc(0, "No on-the-fly solving is applied", true)
@@ -381,9 +428,15 @@ class pbessolve_tool
       pbes_system::pbes pbesspec_without_counterexample = detail::remove_counterexample_info(pbesspec);
       mCRL2log(log::trace) << pbesspec_without_counterexample;
 
+      // Construct the rewriter from the full data specification, including the functions
+      // that only occur in the counter example equations (e.g. those generated for a
+      // witness). This rewriter is shared between the first and second instantiation so
+      // that the second pass can still rewrite counter example expressions.
+      data::rewriter shared_rewriter = detail::construct_rewriter(options, pbesspec);
+
       mCRL2log(log::verbose) << "Generating parity game..." << std::endl;
       structure_graph initial_G;
-      PbesInstAlgorithm first_instantiate(options, pbesspec_without_counterexample, initial_G);
+      PbesInstAlgorithm first_instantiate(options, pbesspec_without_counterexample, initial_G, shared_rewriter);
 
       timer().start("first-instantiation");
       first_instantiate.run();

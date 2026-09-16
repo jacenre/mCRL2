@@ -6,19 +6,13 @@
 // (See accompanying file LICENSE_1_0.txt or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 //
-/// \file mcrl2/data/source/machine_number.cpp
-/// \brief This file implements all functions that rely on the boost 
+/// \file mcrl2/data/source/machine_word.cpp
+/// \brief This file implements all functions that rely on the boost
 ///        multiprecision library, such that this library does not need
-///        to be in the include path. 
+///        to be in the include path.
 
 #include <boost/multiprecision/cpp_int.hpp>
 #include "mcrl2/data/detail/machine_word.h"
-
-
-
-
-
-
 
 namespace mcrl2::data::sort_machine_word::detail
 {
@@ -84,6 +78,11 @@ std::size_t div_triple_doubleword(const std::size_t n1, const std::size_t n2, co
   return static_cast<std::size_t>(m1 / m2);
 }
 
+std::size_t sqrt_word(const std::size_t n)
+{ 
+  return boost::multiprecision::sqrt(n);
+}
+
 std::size_t sqrt_doubleword(const std::size_t n1, const std::size_t n2)
 {
   boost::multiprecision::uint128_t m1=n1;
@@ -126,12 +125,4 @@ std::size_t sqrt_quadrupleword_overflow(const std::size_t n1, const std::size_t 
 }
 
 
-} // end namespace detail 
-
-
-
-
-
-
-
-
+} // end namespace detail

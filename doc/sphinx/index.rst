@@ -36,19 +36,19 @@ the `University of Twente <http://fmt.cs.utwente.nl>`_.
 
 .. note::
 
-   The latest release, mCRL2 202507.0, is now available from the :ref:`download` page.
+   The latest release, mCRL2 202607.0, is now available from the :ref:`download` page.
    See the `changelog <https://github.com/mCRL2org/mCRL2/blob/master/CHANGES>`_ for a detailed list
    of changes.
 
 .. note::
 
-   The Coursera lectures are now freely available on Youtube, divided in four parts. It is intended
-   that the full course including exercises will soon be available on openlearnity.com.
+   The Coursera lectures are now freely available on Youtube, divided in four parts. 
+   The lectures are also available on `openlearnity.com <https://www.openlearnity.org/courses/?organization=tue>`_.
 
-   - `Automata and behavioural equivalences <https://www.youtube.com/watch?v=1brp80vNSy4&list=PLTlBz41EgXBTRm4jcsRwKWoTazWxiieNi>`_.
-   - `Model process behaviour <https://www.youtube.com/watch?v=1yP9kMpkv38&list=PLTlBz41EgXBTmbFWpxMsZRT2vcnxxC6fF>`_.
-   - `Requirements by modal formulas <https://www.youtube.com/watch?v=-vmhNqO16MA&list=PLTlBz41EgXBQ_vIWcFcGJa8_-a8-o19_F>`_.
-   - `Modelling software, protocols, and other behaviour <https://www.youtube.com/watch?v=JV2djZV_dls&list=PLTlBz41EgXBSZPXTzP_MuvbO6MnmTOly6>`_.
+   - `Automata and behavioural equivalences <https://www.youtube.com/watch?v=1brp80vNSy4&list=PLTlBz41EgXBTRm4jcsRwKWoTazWxiieNi>`__.
+   - `Model process behaviour <https://www.youtube.com/watch?v=1yP9kMpkv38&list=PLTlBz41EgXBTmbFWpxMsZRT2vcnxxC6fF>`__.
+   - `Requirements by modal formulas <https://www.youtube.com/watch?v=-vmhNqO16MA&list=PLTlBz41EgXBQ_vIWcFcGJa8_-a8-o19_F>`__.
+   - `Modelling software, protocols, and other behaviour <https://www.youtube.com/watch?v=JV2djZV_dls&list=PLTlBz41EgXBSZPXTzP_MuvbO6MnmTOly6>`__.
 
 .. note::
 

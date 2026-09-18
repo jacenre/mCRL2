@@ -40,6 +40,7 @@ protected:
     m_options.instantiate_infinite_quantifier_guards = parser.has_option("instantiate-infinite-quantifier-guards");
     m_options.rules_ideal = parser.has_option("rules-ideal");
     m_options.solve_symbolic = parser.has_option("solve-symbolic-args");
+    m_options.symbolic_structure_graph = parser.has_option("symbolic-structure-graph");
     m_options.stategraph = parser.has_option("stategraph");
     m_options.solve_symbolic_args = parser.option_argument_as<std::string>("solve-symbolic-args");
     m_options.optimization = parser.option_argument_as<partial_solve_strategy>("optimization");
@@ -86,6 +87,9 @@ protected:
       "Solve the PBES symbolically using the following arguments, which are passed verbatim to pbessolvesymbolic. "
       "The outer -r/--rewriter option is not forwarded, so the rewriter for the symbolic solver must be set here "
       "explicitly (e.g. -rjittyc); it defaults to the rewriter of pbessolvesymbolic itself.");
+    desc.add_option("symbolic-structure-graph",
+      "Build the structure graph directly from the symbolic game and its winning strategy, instead of "
+      "the second (explicit) instantiation in pbessolvesymbolic.");
     desc.add_option("var-choice",
       utilities::make_enum_argument<var_choice_strategy>("STRATEGY")
         .add_value_desc(var_choice_strategy::lhs, "The variable order of the left-hand side of the equation.", true)

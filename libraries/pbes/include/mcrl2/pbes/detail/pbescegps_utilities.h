@@ -112,6 +112,7 @@ struct pbescegps_options
   partial_solve_strategy optimization = partial_solve_strategy::no_optimisation;
   bool init_control_flow = false;
   bool solve_symbolic = false;
+  bool symbolic_structure_graph = false; // build graph symbolically
   bool stategraph = false;
   var_choice_strategy var_choice = var_choice_strategy::lhs;
   std::string solve_symbolic_args = "";

@@ -168,8 +168,10 @@ public:
       {
         bp::ipstream output_sym_stream;
         bp::opstream input_sym_stream;
-        const std::string command
-          = "pbessolvesymbolic - " + options.solve_symbolic_args + " --structure-graph-out=" + structure_graph_path;
+        const std::string symbolic_structure_graph_arg
+          = options.symbolic_structure_graph ? " --structure-graph-symbolic" : "";
+        const std::string command = "pbessolvesymbolic - " + options.solve_symbolic_args + symbolic_structure_graph_arg
+                                    + " --structure-graph-out=" + structure_graph_path;
         mCRL2log(log::debug) << "Solving symbolic with command: " << command << std::endl;
         sym_process = bp::child(command, bp::std_in<input_sym_stream, bp::std_out> output_sym_stream);
 
@@ -784,6 +786,7 @@ public:
             const std::set<data::variable> irrelevant = state.W[eq_name];
             for (const data::variable& var: irrelevant)
             {
+              mCRL2log(log::verbose) << "Un-abstracting " << var.name() << " from " << eq_name << std::endl;
               state.remove_abstracted_variable(p, eq_name, var);
             }
             found = true;
@@ -794,10 +797,9 @@ public:
 
           if (options.var_choice == var_choice_strategy::all)
           {
-            mCRL2log(log::debug) << "Un-abstracted all parameters " << core::detail::print_list(essential_vars)
-                                 << " from equation " << eq_name << std::endl;
             for (const data::variable& var: essential_vars)
             {
+              mCRL2log(log::verbose) << "Un-abstracting " << var.name() << " from " << eq_name << std::endl;
               state.remove_abstracted_variable(p, eq_name, var);
             }
             found = true;
@@ -832,8 +834,7 @@ public:
 
           if (selected_var)
           {
-            mCRL2log(log::debug) << "Un-abstracted parameter " << selected_var->name() << " from equation " << eq_name
-                                 << std::endl;
+            mCRL2log(log::verbose) << "Un-abstracting " << selected_var->name() << " from " << eq_name << std::endl;
             state.remove_abstracted_variable(p, eq_name, *selected_var);
             found = true;
             return;

@@ -62,6 +62,7 @@ struct symbolic_reachability_options: public symbolic::symbolic_reachability_opt
   bool naive_counter_example_instantiation = false;
   bool determinize_strategy = true; // keep a single strategy successor per vertex of the winner
                                     // during the second (evidence) instantiation
+  bool symbolic_structure_graph = false; // build graph from the symbolic game
   std::size_t solve_strategy = 0;
   std::size_t split_conditions = 0;
   std::string srf;
@@ -535,6 +536,12 @@ class pbesreach_algorithm
     const std::vector<boost::dynamic_bitset<>>& read_write_group_patterns() const
     {
       return m_group_patterns;
+    }
+
+    /// \returns The LDD variable permutation.
+    const std::vector<std::size_t>& variable_order() const
+    {
+      return m_variable_order;
     }
 };
 

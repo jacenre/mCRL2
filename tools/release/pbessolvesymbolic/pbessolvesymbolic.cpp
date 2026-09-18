@@ -20,12 +20,14 @@
 #include "mcrl2/pbes/detail/pbes_io.h"
 #include "mcrl2/pbes/detail/pbes_remove_counterexample_info.h"
 #include "mcrl2/pbes/detail/pbessolve_algorithm.h"
+#include "mcrl2/pbes/detail/symbolic_structure_graph.h"
 #include "mcrl2/pbes/pbes.h"
 #include "mcrl2/pbes/pbes_expression.h"
 #include "mcrl2/pbes/pbesinst_structure_graph.h"
 #include "mcrl2/pbes/pbesreach.h"
 #include "mcrl2/pbes/pbesreach_partial.h"
 #include "mcrl2/pbes/rewriters/data_rewriter.h"
+#include "mcrl2/pbes/solve_structure_graph.h"
 #include "mcrl2/pbes/srf_pbes.h"
 #include "mcrl2/pbes/structure_graph_io.h"
 #include "mcrl2/pbes/symbolic_pbessolve.h"
@@ -37,6 +39,7 @@
 #include "mcrl2/utilities/logger.h"
 #include "mcrl2/utilities/parallel_tool.h"
 #include "mcrl2/utilities/power_of_two.h"
+#include "mcrl2/utilities/stopwatch.h"
 
 using namespace mcrl2;
 using namespace mcrl2::pbes_system;
@@ -574,6 +577,10 @@ protected:
       "3 alternative split for conjunctive conditions where even more states can become reachable.");
     desc.add_hidden_option("naive-counter-example-instantiation",
       "run the naive instantiation algorithm for pbes with counter example information");
+    desc.add_hidden_option("structure-graph-symbolic",
+      "build the structure graph directly from the symbolic game and strategy, without the second "
+      "(explicit) instantiation. Only used together with --structure-graph-out and when no evidence "
+      "is requested.");
     desc.add_hidden_option("no-determinize-strategy",
       "do not restrict the strategy to a single successor per vertex during the second "
       "instantiation. Keeping one successor is sound because every edge that the symbolic solver "
@@ -606,6 +613,7 @@ protected:
     options.reset_parameters = parser.has_option("reset");
     options.naive_counter_example_instantiation = parser.has_option("naive-counter-example-instantiation");
     options.determinize_strategy = !parser.has_option("no-determinize-strategy");
+    options.symbolic_structure_graph = parser.has_option("structure-graph-symbolic");
     if (!options.make_total)
     {
       options.detect_deadlocks = true; // This is a required setting if the pbes is not total.
@@ -933,6 +941,49 @@ void solve(pbes_system::pbes pbesspec,
       else
       {
         mCRL2log(log::log_level_t::verbose) << (result ? "true" : "false") << std::endl;
+
+        // Build the graph from the symbolic strategy when requested.
+        if (emit_structure_graph && options_.symbolic_structure_graph && lpsfile.empty() && ltsfile.empty())
+        {
+          stopwatch construction_watch;
+          timer.start("symbolic-structure-graph");
+          structure_graph SG = mcrl2::pbes_system::detail::symbolic_structure_graph(reach, solution, result);
+          const double construction_time = construction_watch.seconds();
+          timer.finish("symbolic-structure-graph");
+
+          std::size_t edges = 0;
+          for (structure_graph::index_type i = 0; i < SG.extent(); ++i)
+          {
+            edges += SG.all_successors(i).size();
+          }
+          mCRL2log(log::verbose) << "Constructed symbolic structure graph with " << SG.all_vertices().size()
+                                 << " vertices and " << edges << " edges (time = " << std::setprecision(3) << std::fixed
+                                 << construction_time << "s)" << std::endl;
+
+          // The skeleton is not necessarily a complete game.
+          if (options_.check_strategy)
+          {
+            stopwatch verification_watch;
+            structure_graph check(SG);
+            const bool sg_result = pbes_system::solve_structure_graph(check);
+            const double verification_time = verification_watch.seconds();
+            if (sg_result != result)
+            {
+              throw mcrl2::runtime_error("The symbolically built structure graph does not match the symbolic result.");
+            }
+            mCRL2log(log::verbose) << "Verified the symbolic structure graph (result " << (sg_result ? "true" : "false")
+                                   << ", time = " << std::setprecision(3) << std::fixed << verification_time << "s)"
+                                   << std::endl;
+          }
+
+          timer.start("save-structure-graph");
+          pbes_system::save_structure_graph(SG, structure_graph_filename);
+          timer.finish("save-structure-graph");
+          mCRL2log(log::verbose) << "Saved structure graph in " << structure_graph_filename << std::endl;
+          // pbescegps reads this result from stdout.
+          std::cout << (result ? "true" : "false") << std::endl;
+          return;
+        }
 
         // Based on the result remove the unnecessary equations related to counter example information.
         mCRL2log(log::verbose) << "Removing unnecessary counter example information for other player." << std::endl;

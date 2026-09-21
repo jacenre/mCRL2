@@ -112,7 +112,9 @@ struct pbescegps_options
   partial_solve_strategy optimization = partial_solve_strategy::no_optimisation;
   bool init_control_flow = false;
   bool solve_symbolic = false;
+  bool solve_symbolic_lazy = false; // solve and refine in-process, lazily querying the symbolic game
   bool symbolic_structure_graph = false; // build graph symbolically
+  bool symbolic_structure_graph_complete = false; // build the complete graph symbolically
   bool stategraph = false;
   var_choice_strategy var_choice = var_choice_strategy::lhs;
   std::string solve_symbolic_args = "";

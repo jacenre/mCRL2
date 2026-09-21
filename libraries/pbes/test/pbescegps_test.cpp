@@ -254,8 +254,10 @@ BOOST_AUTO_TEST_CASE(test_select_variable_strategy_alignment)
   data::rewriter datar(p.data(), opts.rewrite_strategy);
   ruling_relation_type ruling;
   pbescegps_refine_strategies refine;
+  detail::structure_graph_refinement_graph under_view(under_graph);
+  detail::structure_graph_refinement_graph over_view(over_graph);
   BOOST_CHECK(
-    refine.refine_using_strategies(p, under_pbes, over_pbes, state, opts, under_graph, over_graph, datar, ruling));
+    refine.refine_using_strategies(p, under_pbes, over_pbes, state, opts, under_view, over_view, datar, ruling));
   BOOST_CHECK((abstracted_names(state, "X") == std::set<std::string>{"p"}));
 }
 

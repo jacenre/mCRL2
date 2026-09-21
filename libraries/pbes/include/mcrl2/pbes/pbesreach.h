@@ -63,6 +63,7 @@ struct symbolic_reachability_options: public symbolic::symbolic_reachability_opt
   bool determinize_strategy = true; // keep a single strategy successor per vertex of the winner
                                     // during the second (evidence) instantiation
   bool symbolic_structure_graph = false; // build graph from the symbolic game
+  bool symbolic_structure_graph_complete = false; // build the complete graph from the symbolic game
   std::size_t solve_strategy = 0;
   std::size_t split_conditions = 0;
   std::string srf;

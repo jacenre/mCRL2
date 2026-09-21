@@ -26,6 +26,51 @@ using data::tools::rewriter_tool;
 using pbes_system::tools::pbes_input_tool;
 using pbes_system::tools::pbes_rewriter_tool;
 
+#ifdef MCRL2_ENABLE_SYLVAN
+#include <lace.h>
+
+namespace mcrl2::pbes_system
+{
+
+struct pbescegps_lazy_task_args
+{
+  const std::string* input_filename;
+  const utilities::file_format* input_format;
+  const pbescegps_options* options;
+  bool result;
+};
+
+TASK_DECL_1(bool, pbescegps_lazy_task, pbescegps_lazy_task_args*); // NOLINT(cppcoreguidelines-pro-type-cstyle-cast)
+#define pbescegps_lazy_task(a) RUN(pbescegps_lazy_task, a) // NOLINT(cppcoreguidelines-macro-usage)
+
+// Runs load + CEGAR on a Lace worker so all aterm reference variables stay on
+// one thread. See the declaration in pbescegps.h.
+TASK_IMPL_1(bool, pbescegps_lazy_task, pbescegps_lazy_task_args*, args)
+{
+  pbes p;
+  load_pbes(p, *args->input_filename, *args->input_format);
+  pbes_system::algorithms::normalize(p);
+  pbescegps_iterator iterator;
+  args->result = iterator.run_cegps_algorithm(p, *args->options);
+  return true;
+}
+
+bool pbescegps_lazy(const std::string& input_filename,
+  const utilities::file_format& input_format,
+  const pbescegps_options& options)
+{
+  detail::sylvan_runtime runtime(options.number_of_threads);
+  pbescegps_lazy_task_args args{.input_filename = &input_filename,
+    .input_format = &input_format,
+    .options = &options,
+    .result = false};
+  pbescegps_lazy_task(&args);
+  return args.result;
+}
+
+} // namespace mcrl2::pbes_system
+#endif
+
 class pbescegps_tool : public parallel_tool<pbes_input_tool<pbes_rewriter_tool<rewriter_tool<input_tool>>>>
 {
 protected:
@@ -41,6 +86,8 @@ protected:
     m_options.rules_ideal = parser.has_option("rules-ideal");
     m_options.solve_symbolic = parser.has_option("solve-symbolic-args");
     m_options.symbolic_structure_graph = parser.has_option("symbolic-structure-graph");
+    m_options.symbolic_structure_graph_complete = parser.has_option("symbolic-structure-graph-complete");
+    m_options.solve_symbolic_lazy = parser.has_option("symbolic-structure-graph-lazy");
     m_options.stategraph = parser.has_option("stategraph");
     m_options.solve_symbolic_args = parser.option_argument_as<std::string>("solve-symbolic-args");
     m_options.optimization = parser.option_argument_as<partial_solve_strategy>("optimization");
@@ -90,6 +137,16 @@ protected:
     desc.add_option("symbolic-structure-graph",
       "Build the structure graph directly from the symbolic game and its winning strategy, instead of "
       "the second (explicit) instantiation in pbessolvesymbolic.");
+    desc.add_option("symbolic-structure-graph-complete",
+      "Like --symbolic-structure-graph, but build the complete structure graph from the symbolic game: "
+      "materialise every successor in the winning region instead of pruning the walk to one winner "
+      "strategy successor. This gives refinement more edges to match, at the cost of a larger graph. "
+      "Requires --solve-symbolic-args.");
+    desc.add_option("symbolic-structure-graph-lazy",
+      "Solve each approximation in-process (one Sylvan runtime for the whole run) and let refinement "
+      "lazily query the symbolic winning region instead of materialising a structure graph. This is the "
+      "in-process symbolic refinement mode. It does not spawn pbessolvesymbolic and ignores "
+      "--solve-symbolic-args; requires a build with Sylvan enabled.");
     desc.add_option("var-choice",
       utilities::make_enum_argument<var_choice_strategy>("STRATEGY")
         .add_value_desc(var_choice_strategy::lhs, "The variable order of the left-hand side of the equation.", true)

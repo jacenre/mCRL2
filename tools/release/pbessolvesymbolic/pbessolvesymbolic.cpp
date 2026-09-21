@@ -581,6 +581,10 @@ protected:
       "build the structure graph directly from the symbolic game and strategy, without the second "
       "(explicit) instantiation. Only used together with --structure-graph-out and when no evidence "
       "is requested.");
+    desc.add_hidden_option("structure-graph-complete",
+      "like --structure-graph-symbolic, but materialise every successor in the winning region instead "
+      "of pruning the walk to one winner strategy successor. Only used together with --structure-graph-out "
+      "and when no evidence is requested.");
     desc.add_hidden_option("no-determinize-strategy",
       "do not restrict the strategy to a single successor per vertex during the second "
       "instantiation. Keeping one successor is sound because every edge that the symbolic solver "
@@ -614,6 +618,7 @@ protected:
     options.naive_counter_example_instantiation = parser.has_option("naive-counter-example-instantiation");
     options.determinize_strategy = !parser.has_option("no-determinize-strategy");
     options.symbolic_structure_graph = parser.has_option("structure-graph-symbolic");
+    options.symbolic_structure_graph_complete = parser.has_option("structure-graph-complete");
     if (!options.make_total)
     {
       options.detect_deadlocks = true; // This is a required setting if the pbes is not total.
@@ -943,11 +948,15 @@ void solve(pbes_system::pbes pbesspec,
         mCRL2log(log::log_level_t::verbose) << (result ? "true" : "false") << std::endl;
 
         // Build the graph from the symbolic strategy when requested.
-        if (emit_structure_graph && options_.symbolic_structure_graph && lpsfile.empty() && ltsfile.empty())
+        if (emit_structure_graph && (options_.symbolic_structure_graph || options_.symbolic_structure_graph_complete)
+            && lpsfile.empty() && ltsfile.empty())
         {
           stopwatch construction_watch;
           timer.start("symbolic-structure-graph");
-          structure_graph SG = mcrl2::pbes_system::detail::symbolic_structure_graph(reach, solution, result);
+          structure_graph SG = mcrl2::pbes_system::detail::symbolic_structure_graph(reach,
+            solution,
+            result,
+            options_.symbolic_structure_graph_complete);
           const double construction_time = construction_watch.seconds();
           timer.finish("symbolic-structure-graph");
 

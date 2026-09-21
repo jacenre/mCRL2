@@ -24,6 +24,7 @@
 #include "mcrl2/data/variable.h"
 #include "mcrl2/pbes/detail/guard_traverser.h"
 #include "mcrl2/pbes/detail/pbescegps_utilities.h"
+#include "mcrl2/pbes/detail/refinement_graph.h"
 #include "mcrl2/pbes/pbes.h"
 #include "mcrl2/pbes/pbes_equation.h"
 #include "mcrl2/pbes/pbes_expression.h"
@@ -48,7 +49,7 @@ struct pbescegps_refine_strategies
 {
   using decoration_type = structure_graph::decoration_type;
   using index_type = structure_graph::index_type;
-  using vertex = structure_graph::vertex;
+  using vertex = detail::refinement_vertex;
 
 private:
   const pbes* m_p = nullptr;
@@ -67,44 +68,6 @@ private:
 
   std::map<core::identifier_string, std::map<data::variable, std::size_t>> m_var_count_cache;
 
-  // Multi-level index key for formula indexing. Currently keyed by equation name only,
-  // but extensible for additional filtering criteria (e.g., first argument, arity).
-  struct formula_key
-  {
-    core::identifier_string eq_name;
-
-    bool operator<(const formula_key& other) const
-    {
-      return eq_name < other.eq_name;
-    }
-
-    bool operator==(const formula_key& other) const
-    {
-      return eq_name == other.eq_name;
-    }
-  };
-
-  // The key is the common-parameter version of a PVI pretty-printed.
-  struct common_parameter_key_type
-  {
-    std::string value;
-
-    bool operator<(const common_parameter_key_type& other) const
-    {
-      return value < other.value;
-    }
-  };
-
-  struct indexed_vertices
-  {
-    std::vector<std::pair<common_parameter_key_type, index_type>> sorted_by_formula;
-  };
-
-  // Index structure: maps (eq_name) → sorted vector of (common-parameter key, vertex index) pairs.
-  // The pairs are sorted by their key to enable binary search.
-  std::map<formula_key, indexed_vertices> m_under_index;
-  std::map<formula_key, indexed_vertices> m_over_index;
-
   // For each equation, records the positions of parameters retained in both
   // approximations. Pairs are ordered by their original parameter position.
   std::map<core::identifier_string, std::vector<std::pair<std::size_t, std::size_t>>> m_common_parameter_indices;
@@ -116,8 +79,6 @@ private:
     m_original_params.clear();
     m_var_count_cache.clear();
     m_common_parameter_indices.clear();
-    m_under_index.clear();
-    m_over_index.clear();
   }
 
   void initialize_parameters(const pbes& p, const pbes& under_pbes, const pbes& over_pbes)
@@ -158,262 +119,36 @@ private:
     }
   }
 
-  common_parameter_key_type common_parameter_key(const propositional_variable_instantiation& pvi, bool is_under) const
-  {
-    const auto indices_it = m_common_parameter_indices.find(pvi.name());
-    if (indices_it == m_common_parameter_indices.end())
-    {
-      throw mcrl2::runtime_error("Could not find common parameter indices for equation " + pp(pvi));
-    }
-
-    const std::vector<data::data_expression> args = as_vector(pvi.parameters());
-    std::vector<data::data_expression> common_parameters;
-    common_parameters.reserve(indices_it->second.size());
-    for (const auto& [under_index, over_index]: indices_it->second)
-    {
-      const std::size_t index = is_under ? under_index : over_index;
-      common_parameters.push_back(args[index]);
-    }
-    return {pp(propositional_variable_instantiation(pvi.name(),
-      data::data_expression_list(common_parameters.begin(), common_parameters.end())))};
-  }
-
-  // True if the equation occurs in the PBES. SRF transformations may introduce
-  // auxiliary equations, which are ignored during matching.
-  bool is_known_equation(const core::identifier_string& name) const
-  {
-    return m_common_parameter_indices.find(name) != m_common_parameter_indices.end();
-  }
-
-  // Helper to build the sorted index for a graph.
-  void build_formula_index(const structure_graph& g, std::map<formula_key, indexed_vertices>& index, bool is_under)
-  {
-    for (index_type idx = 0; idx < g.extent(); ++idx)
-    {
-      const pbes_expression& formula = g.find_vertex(idx).formula();
-      // Vertices can have a formula that is not a propositional variable
-      // instantiation (e.g. X2 || X3).
-      if (!is_propositional_variable_instantiation(formula))
-      {
-        continue;
-      }
-      const auto& pvi = atermpp::down_cast<propositional_variable_instantiation>(formula);
-      if (!is_known_equation(pvi.name()))
-      {
-        mCRL2log(log::debug) << "Ignoring structure graph vertex for auxiliary equation " << pvi.name() << std::endl;
-        continue;
-      }
-      formula_key equation_key{pvi.name()};
-
-      index[equation_key].sorted_by_formula.emplace_back(common_parameter_key(pvi, is_under), idx);
-    }
-
-    // Sort each bucket by common-parameter key for binary search.
-    for (auto& [key, vertices]: index)
-    {
-      std::sort(vertices.sorted_by_formula.begin(),
-        vertices.sorted_by_formula.end(),
-        [](const auto& a, const auto& b) { return a.first < b.first; });
-    }
-  }
-
-  void build_formula_indices(const structure_graph& under_graph, const structure_graph& over_graph)
-  {
-    build_formula_index(under_graph, m_under_index, true);
-    build_formula_index(over_graph, m_over_index, false);
-  }
-
-  // Maps each parameter in a PVI to its original parameter name and compares
-  // by finding common parameters in both under and over approximations.
-  bool pvis_match_by_common_parameters(const propositional_variable_instantiation& a,
-    const propositional_variable_instantiation& b,
-    bool find_in_over) const
-  {
-    mCRL2log(log::trace) << "pvis_match_by_common_parameters comparing " << a << " with " << b << std::endl;
-
-    if (a.name() != b.name())
-    {
-      mCRL2log(log::trace) << "  Different names => NO MATCH" << std::endl;
-      return false;
-    }
-
-    auto orig_eq_opt = detail::find_equation_by_name(*m_p, a.name());
-    if (!orig_eq_opt)
-    {
-      throw mcrl2::runtime_error("Could not find original equation for " + pp(a));
-    }
-    auto orig_it = m_original_params.find(a.name());
-    if (orig_it == m_original_params.end())
-    {
-      throw mcrl2::runtime_error("Could not find original params for equation " + pp(a));
-    }
-    const std::vector<data::variable>& orig_params = orig_it->second;
-
-    const std::vector<data::data_expression>& a_args = as_vector(a.parameters());
-    const std::vector<data::data_expression>& b_args = as_vector(b.parameters());
-
-    mCRL2log(log::trace) << "  Original params: ";
-    for (const auto& p: orig_params)
-      mCRL2log(log::trace) << p.name() << " ";
-    mCRL2log(log::trace) << std::endl;
-
-    auto it_under = m_under_params.find(a.name());
-    auto it_over = m_over_params.find(a.name());
-    if (it_under == m_under_params.end() || it_over == m_over_params.end())
-    {
-      throw mcrl2::runtime_error("Could not find remaining params for equation " + pp(a));
-    }
-
-    const auto& indices = m_common_parameter_indices.at(a.name());
-    for (const auto& [under_index, over_index]: indices)
-    {
-      const std::size_t a_index = find_in_over ? under_index : over_index;
-      const std::size_t b_index = find_in_over ? over_index : under_index;
-      if (a_args[a_index] != b_args[b_index])
-      {
-        return false;
-      }
-    }
-
-    mCRL2log(log::trace) << "  MATCH" << std::endl;
-    return true;
-  }
-
-  // Helper function to try matching PVI arguments against parameter sets
-  bool try_match(const std::vector<data::data_expression>& a_args,
-    const std::vector<data::data_expression>& b_args,
-    const std::vector<data::variable>& a_params,
-    const std::vector<data::variable>& b_params) const
-  {
-    // Build maps from parameter name to its value
-    std::map<std::string, data::data_expression> a_values;
-    std::map<std::string, data::data_expression> b_values;
-
-    // Map arguments to parameter names using the parameter ordering
-    if (a_args.size() != a_params.size())
-    {
-      throw std::runtime_error(
-        "Arg count mismatch: " + std::to_string(a_args.size()) + " vs " + std::to_string(a_params.size()));
-    }
-
-    if (b_args.size() != b_params.size())
-    {
-      throw std::runtime_error(
-        "Arg count mismatch: " + std::to_string(b_args.size()) + " vs " + std::to_string(b_params.size()));
-    }
-
-    for (std::size_t i = 0; i < a_params.size(); ++i)
-    {
-      a_values[a_params[i].name()] = a_args[i];
-      mCRL2log(log::trace) << "    a[" << a_params[i].name() << "]=" << pp(a_args[i]) << std::endl;
-    }
-
-    for (std::size_t i = 0; i < b_params.size(); ++i)
-    {
-      b_values[b_params[i].name()] = b_args[i];
-      mCRL2log(log::trace) << "    b[" << b_params[i].name() << "]=" << pp(b_args[i]) << std::endl;
-    }
-
-    // Find common parameters and check they have the same values
-    for (const auto& [param_name, a_val]: a_values)
-    {
-      auto it_b = b_values.find(param_name);
-      if (it_b != b_values.end())
-      {
-        const data::data_expression& b_val = it_b->second;
-        mCRL2log(log::trace) << "    Common param " << param_name << ": a=" << pp(a_val) << " vs b=" << pp(b_val);
-
-        if (a_val != b_val)
-        {
-          mCRL2log(log::trace) << " => NOT EQUAL" << std::endl;
-          return false;
-        }
-        mCRL2log(log::trace) << " => EQUAL" << std::endl;
-      }
-    }
-
-    return true;
-  }
-
-  // Determines whether two vertex formulae should be considered equal for the
-  // purpose of matching vertices between the under- and over-approximation
-  // structure graphs. When parameters are removed from an equation via abstraction
-  // or parelm, matching is done by original parameter position (see
-  // pvis_match_by_original_position), comparing only at positions that are
-  // concrete in both PVIs.
-  bool formulae_match(const pbes_expression& a, const pbes_expression& b, bool find_in_over) const
-  {
-    return pvis_match_by_common_parameters(atermpp::down_cast<propositional_variable_instantiation>(a),
-      atermpp::down_cast<propositional_variable_instantiation>(b),
-      find_in_over);
-  }
-
-  index_type find_vertex_index_by_formula(const structure_graph& g, const pbes_expression& formula, bool find_in_over)
+  index_type
+  find_vertex_index_by_formula(const detail::refinement_graph& g, const pbes_expression& formula, bool find_in_over)
   {
     const auto& pvi = atermpp::down_cast<propositional_variable_instantiation>(formula);
-    formula_key equation_key{pvi.name()};
-
-    // Select the appropriate index based on which graph we're searching
-    const std::map<formula_key, indexed_vertices>& index = find_in_over ? m_over_index : m_under_index;
-
-    auto key_it = index.find(equation_key);
-    if (key_it == index.end())
+    const auto indices_it = m_common_parameter_indices.find(pvi.name());
+    if (indices_it == m_common_parameter_indices.end())
     {
       return undefined_vertex();
     }
 
-    const indexed_vertices& candidates = key_it->second;
-    const common_parameter_key_type common_key = common_parameter_key(pvi, find_in_over);
-
-    // Binary search for vertices with identical common-parameter values.
-    auto range = std::equal_range(candidates.sorted_by_formula.begin(),
-      candidates.sorted_by_formula.end(),
-      std::make_pair(common_key, index_type(0)),
-      [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    // Among candidates with matching common-parameter values, find the first
-    // one that passes the full semantic comparison.
-    for (auto it = range.first; it != range.second; ++it)
+    const std::vector<data::data_expression> args = atermpp::as_vector(pvi.parameters());
+    detail::fixed_parameters fixed_positions;
+    for (const auto& [under_index, over_index]: indices_it->second)
     {
-      if (formulae_match(formula, g.find_vertex(it->second).formula(), find_in_over))
+      if (find_in_over)
       {
-        return it->second;
+        // The formula comes from the under graph; the target is the over graph.
+        fixed_positions.emplace_back(over_index, args[under_index]);
+      }
+      else
+      {
+        fixed_positions.emplace_back(under_index, args[over_index]);
       }
     }
-
-#ifndef NDEBUG
-    // If no common-parameter key match was found via binary search, fall back to sequential
-    // search through all candidates for this equation.
-    for (const auto& [candidate_key, idx]: candidates.sorted_by_formula)
-    {
-      if (formulae_match(formula, g.find_vertex(idx).formula(), find_in_over))
-      {
-        std::string err = "Our indexing did not find the right formula in this range:";
-        for (auto it = range.first; it != range.second; ++it)
-        {
-          err += "\n  " + pp(g.find_vertex(it->second).formula());
-        }
-        throw mcrl2::runtime_error(err);
-      }
-    }
-#endif
-
-    return undefined_vertex();
+    return g.find_matching_vertex(pvi.name(), fixed_positions);
   }
 
-  static bool has_edge(const structure_graph& g, index_type from, index_type to)
-  {
-    if (from >= g.extent() || to >= g.extent())
-    {
-      return false;
-    }
-    const std::vector<index_type>& successors = g.all_successors(from);
-    return std::find(successors.begin(), successors.end(), to) != successors.end();
-  }
-
-  bool select_variable(const structure_graph& g,
+  bool select_variable(const detail::refinement_graph& g,
     index_type current_idx,
-    const structure_graph& g_prime,
+    const detail::refinement_graph& g_prime,
     index_type matching_idx,
     const std::string& phase,
     bool g_is_under)
@@ -638,8 +373,8 @@ private:
     return false;
   }
 
-  bool step_decorations(const structure_graph& primary,
-    const structure_graph& other,
+  bool step_decorations(const detail::refinement_graph& primary,
+    const detail::refinement_graph& other,
     const std::string& phase,
     bool primary_is_under)
   {
@@ -705,8 +440,8 @@ private:
     return false;
   }
 
-  bool step_edges(const structure_graph& primary,
-    const structure_graph& other,
+  bool step_edges(const detail::refinement_graph& primary,
+    const detail::refinement_graph& other,
     const std::string& phase,
     bool primary_is_under)
   {
@@ -769,7 +504,7 @@ private:
             {
               mCRL2log(log::trace) << " Index for other strat " << other_strategy_in_primary_idx << std::endl;
               if (other_strategy_in_primary_idx == undefined_vertex()
-                  || !has_edge(primary, current_idx, other_strategy_in_primary_idx))
+                  || !primary.has_edge(current_idx, other_strategy_in_primary_idx))
               {
                 mCRL2log(log::debug) << " found other edge for vertex " << current_vertex << std::endl;
                 if (select_variable(primary, current_idx, other, matching_idx, phase, primary_is_under))
@@ -810,7 +545,7 @@ private:
               mCRL2log(log::debug) << " trying other edge if " << strategy_match_idx << " is in "
                                    << core::detail::print_list(other.find_vertex(matching_idx).successors);
 
-              if (strategy_match_idx == undefined_vertex() || !has_edge(other, matching_idx, strategy_match_idx))
+              if (strategy_match_idx == undefined_vertex() || !other.has_edge(matching_idx, strategy_match_idx))
               {
                 mCRL2log(log::debug) << " found other edge for vertex " << current_vertex << std::endl;
                 if (select_variable(primary, current_idx, other, matching_idx, phase, primary_is_under))
@@ -842,8 +577,8 @@ public:
     const pbes& over_pbes,
     abstract_param_state& state,
     const pbescegps_options& options,
-    const structure_graph& under_graph,
-    const structure_graph& over_graph,
+    const detail::refinement_graph& under_graph,
+    const detail::refinement_graph& over_graph,
     const data::rewriter& data_rewriter,
     const ruling_relation_type& ruling_relation)
   {
@@ -863,11 +598,8 @@ public:
     reset();
     initialize_parameters(p, under_pbes, over_pbes);
     build_common_parameter_indices();
-    build_formula_indices(under_graph, over_graph);
 
     mCRL2log(log::debug) << "Refining using strategies" << std::endl;
-    mCRL2log(log::trace) << "Under: " << under_graph << std::endl;
-    mCRL2log(log::trace) << "Over: " << over_graph << std::endl;
 
     if (step_decorations(under_graph, over_graph, "dec-cex", true))
       return true;

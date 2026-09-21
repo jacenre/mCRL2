@@ -29,6 +29,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace mcrl2::pbes_system::detail
@@ -53,6 +54,15 @@ class symbolic_structure_graph_builder
   std::map<core::identifier_string, bool> m_is_conjunctive;
   std::map<core::identifier_string, std::size_t> m_rank;
   std::vector<propositional_variable_instantiation> m_formulae;
+
+  // When true, do not prune the walk to one winner strategy successor: keep all
+  // successors of every vertex that lie in the winning region. This yields a
+  // complete strategy-guided graph at the cost of materialising more vertices.
+  bool m_complete = false;
+
+  // Safety cap on the number of materialised vertices in complete mode. When it
+  // is hit, expansion stops and a warning is logged; the graph is then partial.
+  std::size_t m_vertex_limit = 1000000;
 
   // Maps cubes to graph indices.
   std::map<std::vector<std::uint32_t>, index_type> m_vertex_index;
@@ -122,10 +132,11 @@ class symbolic_structure_graph_builder
   }
 
 public:
-  symbolic_structure_graph_builder(pbesreach_algorithm& reach)
+  explicit symbolic_structure_graph_builder(pbesreach_algorithm& reach, bool complete = false)
     : m_reach(reach),
       m_data_index(reach.data_index()),
-      m_process_parameters(reach.process_parameters())
+      m_process_parameters(reach.process_parameters()),
+      m_complete(complete)
   {
     m_groups = reach.summand_groups();
     m_n = m_process_parameters.size();
@@ -174,6 +185,11 @@ public:
       {
         throw mcrl2::runtime_error("Unknown equation in symbolic vertex: " + pp(x.name()));
       }
+      if (m_vertex_index.size() >= m_vertex_limit)
+      {
+        throw mcrl2::runtime_error(
+          "Complete symbolic structure graph exceeded the vertex limit of " + std::to_string(m_vertex_limit));
+      }
       const bool conjunctive = m_is_conjunctive.at(x.name());
       const index_type index = builder.insert_variable(x, x, rank_it->second);
       // Decorations encode equation ownership until expansion refines them.
@@ -207,15 +223,21 @@ public:
 
       std::vector<std::vector<std::uint32_t>> target_cubes = ldd_solutions(successors(source, region));
 
-      // Keep one winning move and all opponent moves.
+      // The strategy is a Cartesian over-approximation, so a winning vertex may
+      // have many recorded successors. Pick one as the strategy move. Keeping
+      // every recorded winner move would expand the entire winning region (the
+      // relation is often the full edge relation); determinising the winner side
+      // keeps the walk small, while complete mode still expands all opponent
+      // successors.
+
+      std::optional<std::vector<std::uint32_t>> chosen;
       if (!target_cubes.empty() && source_is_winning_owner && strategy.has_value())
       {
-        const std::optional<std::vector<std::uint32_t>> chosen
-          = strategy_successor(source, target_cubes, strategy.value());
-        if (chosen.has_value())
-        {
-          target_cubes = {chosen.value()};
-        }
+        chosen = strategy_successor(source, target_cubes, strategy.value());
+      }
+      if (chosen.has_value())
+      {
+        target_cubes = {chosen.value()};
       }
 
       // Match explicit RHS decorations.
@@ -236,11 +258,14 @@ public:
 
       for (const std::vector<std::uint32_t>& target: target_cubes)
       {
-        // Follow winner-owned successors.
-        const bool target_is_walked = source_is_winning_owner || is_conjunctive_cube(target) == (winner == 1);
+        // In complete mode every reachable successor is walked; otherwise only
+        // winner-owned successors and opponent successors that stay with the
+        // winner are expanded.
+        const bool target_is_walked
+          = m_complete || source_is_winning_owner || is_conjunctive_cube(target) == (winner == 1);
         const index_type target_index = get_or_create(target, target_is_walked);
         builder.insert_edge(source_index, target_index);
-        if (source_is_winning_owner)
+        if (source_is_winning_owner && (!m_complete || (chosen.has_value() && target == chosen.value())))
         {
           builder.vertex(source_index).strategy = target_index;
         }
@@ -253,10 +278,12 @@ public:
 };
 
 /// \brief Convenience function that builds a structure graph from a symbolic reachability result.
-inline structure_graph
-symbolic_structure_graph(pbesreach_algorithm& reach, const symbolic_solution_t& solution, bool result)
+inline structure_graph symbolic_structure_graph(pbesreach_algorithm& reach,
+  const symbolic_solution_t& solution,
+  bool result,
+  bool complete = false)
 {
-  return symbolic_structure_graph_builder(reach).run(solution, result);
+  return symbolic_structure_graph_builder(reach, complete).run(solution, result);
 }
 
 #endif // MCRL2_ENABLE_SYLVAN

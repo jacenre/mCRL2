@@ -43,10 +43,12 @@
 #include "mcrl2/pbes/propositional_variable.h"
 #include "mcrl2/pbes/rewrite.h"
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <iterator>
 #include <ostream>
 #ifdef MCRL2_ENABLE_SYLVAN
+#include "mcrl2/pbes/detail/lazy_symbolic_refinement_graph.h"
 #include "mcrl2/pbes/pbesreach.h"
 #include "mcrl2/pbes/tools/pbesstategraph_options.h"
 #endif
@@ -70,6 +72,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <ranges>
 #include <set>
 #include <vector>
@@ -86,6 +89,22 @@ inline std::string structure_graph_temp_path()
           / ("pbescegps_" + std::to_string(stamp) + "_" + std::to_string(++counter) + ".sgraph"))
     .string();
 }
+
+#ifdef MCRL2_ENABLE_SYLVAN
+// Maps the tool options onto the symbolic reachability options used in-process.
+// Mirrors the flags that pbescegps forwards to pbessolvesymbolic in child mode.
+inline symbolic_reachability_options lazy_symbolic_reachability_options(const pbescegps_options& options)
+{
+  symbolic_reachability_options o;
+  o.rewrite_strategy = options.rewrite_strategy;
+  o.compute_strategy = true;
+  o.one_point_rule_rewrite = true;
+  o.remove_unused_rewrite_rules = true;
+  o.detect_deadlocks = true;
+  o.max_workers = 1;
+  return o;
+}
+#endif
 
 struct pbescegps_iterator
 {
@@ -169,7 +188,9 @@ public:
         bp::ipstream output_sym_stream;
         bp::opstream input_sym_stream;
         const std::string symbolic_structure_graph_arg
-          = options.symbolic_structure_graph ? " --structure-graph-symbolic" : "";
+          = options.symbolic_structure_graph_complete ? " --structure-graph-complete"
+            : options.symbolic_structure_graph        ? " --structure-graph-symbolic"
+                                                      : "";
         const std::string command = "pbessolvesymbolic - " + options.solve_symbolic_args + symbolic_structure_graph_arg
                                     + " --structure-graph-out=" + structure_graph_path;
         mCRL2log(log::debug) << "Solving symbolic with command: " << command << std::endl;
@@ -244,7 +265,8 @@ public:
 
       // Solve the structure graph
       result = solve_structure_graph(m_solved_graph);
-      mCRL2log(log::verbose) << "Structure graph solver returned " << (result ? "TRUE" : "FALSE") << std::endl;
+      mCRL2log(log::verbose) << "Structure graph solver returned " << (result ? "TRUE" : "FALSE") << " ("
+                             << m_solved_graph.extent() << " vertices)" << std::endl;
     }
     timer.finish("solving approximation");
     if (mcrl2::log::mCRL2logEnabled(log::verbose))
@@ -858,6 +880,13 @@ public:
     // Create the data rewriter once.
     m_datar.emplace(p.data(), options.rewrite_strategy);
 
+#ifndef MCRL2_ENABLE_SYLVAN
+    if (options.solve_symbolic_lazy)
+    {
+      throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
+    }
+#endif
+
     // Compute the ruling relation on an SRF PBES: its summands match the
     // transitions and equations of the symbolic structure graphs.
     if (needs_ruling_relation(options))
@@ -923,15 +952,43 @@ public:
       if (all_empty)
       {
         mCRL2log(log::debug) << "No parameters to abstract, solving normally." << std::endl;
-        auto [result, graph] = solve(p, options);
         final_state = state;
+        if (options.solve_symbolic_lazy)
+        {
+#ifdef MCRL2_ENABLE_SYLVAN
+          detail::symbolic_approximation approx(p, lazy_symbolic_reachability_options(options));
+          return approx.result();
+#else
+          throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
+#endif
+        }
+        auto [result, graph] = solve(p, options);
         return result;
       }
 
       // Try under-approximation
       mCRL2log(log::verbose) << "Trying under-approximation..." << std::endl;
       structure_graph under_graph;
-      bool under_result = solve_approximation_cached(p, state, false, options, under_graph);
+      bool under_result = false;
+#ifdef MCRL2_ENABLE_SYLVAN
+      std::unique_ptr<detail::symbolic_approximation> under_solver;
+      std::unique_ptr<detail::lazy_symbolic_refinement_graph> under_lazy;
+#endif
+      if (options.solve_symbolic_lazy)
+      {
+#ifdef MCRL2_ENABLE_SYLVAN
+        under_solver
+          = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, false, options),
+            lazy_symbolic_reachability_options(options));
+        under_result = under_solver->result();
+#else
+        throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
+#endif
+      }
+      else
+      {
+        under_result = solve_approximation_cached(p, state, false, options, under_graph);
+      }
 
       if (under_result)
       {
@@ -944,7 +1001,26 @@ public:
       // Try over-approximation
       mCRL2log(log::verbose) << "Trying over-approximation..." << std::endl;
       structure_graph over_graph;
-      bool over_result = solve_approximation_cached(p, state, true, options, over_graph);
+      bool over_result = false;
+#ifdef MCRL2_ENABLE_SYLVAN
+      std::unique_ptr<detail::symbolic_approximation> over_solver;
+      std::unique_ptr<detail::lazy_symbolic_refinement_graph> over_lazy;
+#endif
+      if (options.solve_symbolic_lazy)
+      {
+#ifdef MCRL2_ENABLE_SYLVAN
+        over_solver
+          = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, true, options),
+            lazy_symbolic_reachability_options(options));
+        over_result = over_solver->result();
+#else
+        throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
+#endif
+      }
+      else
+      {
+        over_result = solve_approximation_cached(p, state, true, options, over_graph);
+      }
 
       if (!over_result)
       {
@@ -963,15 +1039,44 @@ public:
       pbes over_pbes = apply_abstraction_to_pbes(p, state, true, options);
 
       pbescegps_refine_strategies refine;
-      if (!refine.refine_using_strategies(p,
-            under_pbes,
-            over_pbes,
-            state,
-            options,
-            under_graph,
-            over_graph,
-            *m_datar,
-            m_ruling_relation))
+      bool refined = false;
+      const auto refine_start = std::chrono::steady_clock::now();
+      if (options.solve_symbolic_lazy)
+      {
+#ifdef MCRL2_ENABLE_SYLVAN
+        under_lazy = std::make_unique<detail::lazy_symbolic_refinement_graph>(*under_solver);
+        over_lazy = std::make_unique<detail::lazy_symbolic_refinement_graph>(*over_solver);
+        refined = refine.refine_using_strategies(p,
+          under_pbes,
+          over_pbes,
+          state,
+          options,
+          *under_lazy,
+          *over_lazy,
+          *m_datar,
+          m_ruling_relation);
+#else
+        throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
+#endif
+      }
+      else
+      {
+        detail::structure_graph_refinement_graph under_view(under_graph);
+        detail::structure_graph_refinement_graph over_view(over_graph);
+        refined = refine.refine_using_strategies(p,
+          under_pbes,
+          over_pbes,
+          state,
+          options,
+          under_view,
+          over_view,
+          *m_datar,
+          m_ruling_relation);
+      }
+      const std::chrono::duration<double> refine_elapsed = std::chrono::steady_clock::now() - refine_start;
+      mCRL2log(log::verbose) << "Refinement step took " << std::fixed << std::setprecision(3) << refine_elapsed.count()
+                             << " s" << std::endl;
+      if (!refined)
       {
         unabstract_one_parameter(p, state, options);
       }
@@ -1013,10 +1118,28 @@ inline pbes_expression pbescegps_iterator::apply_abstraction(const pbes_expressi
   return result;
 }
 
+#ifdef MCRL2_ENABLE_SYLVAN
+// Runs the whole CEGAR loop in-process inside a Lace task, so that all aterm
+// reference variables are created and destroyed on the same worker thread.
+// Defined in tools/experimental/pbescegps/pbescegps.cpp.
+bool pbescegps_lazy(const std::string& input_filename,
+  const utilities::file_format& input_format,
+  const pbescegps_options& options);
+#endif
+
 inline bool pbescegps(const std::string& input_filename,
   const utilities::file_format& input_format,
   const pbescegps_options options)
 {
+#ifdef MCRL2_ENABLE_SYLVAN
+  if (options.solve_symbolic_lazy)
+  {
+    bool result = pbescegps_lazy(input_filename, input_format, options);
+    mCRL2log(log::info) << (result ? "true" : "false") << std::endl;
+    return result;
+  }
+#endif
+
   pbes p;
   load_pbes(p, input_filename, input_format);
   algorithms::normalize(p);

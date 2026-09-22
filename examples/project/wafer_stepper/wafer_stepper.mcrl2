@@ -2,11 +2,12 @@
 map  MaximumWafers: Nat;
 eqn  MaximumWafers = 5;
 
-sort WaferState = struct fresh?is_fresh | measured?is_measured | exposed?is_exposed;
+sort WaferState = struct fresh?is_fresh | measured?is_measured | exposed?is_exposed | dummy?is_dummy;
 
 sort Wafer = struct wafer(status : WaferState);
 map  IsFresh,IsMeasured,IsExposed: Wafer -> Bool;
      MakeMeasured,MakeExposed:     Wafer -> Wafer;
+     DummyWafer: Wafer;
 var  s : WaferState;
      w : Wafer;
 eqn  IsFresh(wafer(s))       = is_fresh(s);
@@ -14,6 +15,8 @@ eqn  IsFresh(wafer(s))       = is_fresh(s);
      IsExposed(wafer(s))     = is_exposed(s);
      MakeMeasured(wafer(s))  = wafer(measured);
      MakeExposed(wafer(s))   = wafer(exposed);
+     % MakeDummy(wafer(s))     = wafer(dummy);
+     DummyWafer     = wafer(dummy);
 
 sort WaferList = List (Wafer);
 map  InitWaferList: Nat -> WaferList;
@@ -24,8 +27,6 @@ eqn  InitWaferList(0)     = [];
 sort LockID  = struct L0 | L1 | L2 | L3;
 
 sort RobotID = struct R0 | R1;
-
-glob DummyWafer: Wafer;
 
 act  ALLE_HENS_AAN_BOORD;
      Measure,Expose,Swap;

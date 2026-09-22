@@ -924,8 +924,14 @@ private:
       return abstraction_set_verdict::not_closed;
     }
 
+    // Every abstraction set is solved independently: a result is never reused
+    // for another set that simplifies to the same remaining parameters, so a
+    // cached verdict can never mask a wrong answer.
+    pbescegps_options cegps = options.cepgps;
+    cegps.use_solution_cache = false;
+
     structure_graph graph;
-    bool result = solver.solve_approximation_cached(p, state, is_overapproximation, options.cepgps, graph);
+    bool result = solver.solve_approximation_cached(p, state, is_overapproximation, cegps, graph);
     return (is_overapproximation ? !result : result) ? abstraction_set_verdict::valid
                                                      : abstraction_set_verdict::blocked;
   }

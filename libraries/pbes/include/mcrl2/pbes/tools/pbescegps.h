@@ -324,24 +324,30 @@ public:
       = compute_remaining_parameters(p_approx);
 
     auto key = std::make_pair(remaining_parameters, is_overapproximation);
-    auto cached = m_solution_cache.find(key);
-    if (cached != m_solution_cache.end())
+    if (options.use_solution_cache)
     {
-      mCRL2log(log::verbose) << "Using cached " << (is_overapproximation ? "over" : "under")
-                             << "-approximation with result: " << (cached->second.first ? "TRUE" : "FALSE")
-                             << std::endl;
-      mCRL2log(log::verbose) << "Remaining parameters:" << std::endl;
-      for (const auto& [eq_name, variables]: remaining_parameters)
+      auto cached = m_solution_cache.find(key);
+      if (cached != m_solution_cache.end())
       {
-        mCRL2log(log::verbose) << "  " << eq_name << ": " << core::detail::print_list(variables) << std::endl;
+        mCRL2log(log::verbose) << "Using cached " << (is_overapproximation ? "over" : "under")
+                               << "-approximation with result: " << (cached->second.first ? "TRUE" : "FALSE")
+                               << std::endl;
+        mCRL2log(log::verbose) << "Remaining parameters:" << std::endl;
+        for (const auto& [eq_name, variables]: remaining_parameters)
+        {
+          mCRL2log(log::verbose) << "  " << eq_name << ": " << core::detail::print_list(variables) << std::endl;
+        }
+        graph = cached->second.second;
+        return cached->second.first;
       }
-      graph = cached->second.second;
-      return cached->second.first;
     }
 
     auto [result, solved_graph] = solve_approximation(p_approx, options, is_overapproximation);
     graph = solved_graph;
-    m_solution_cache[key] = {result, solved_graph};
+    if (options.use_solution_cache)
+    {
+      m_solution_cache[key] = {result, solved_graph};
+    }
     return result;
   }
 

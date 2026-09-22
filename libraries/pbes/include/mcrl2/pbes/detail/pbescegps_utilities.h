@@ -125,6 +125,8 @@ struct pbescegps_options
                                                        // infinite quantifier
   bool rules_ideal = false; // if true, enforce the order-ideal invariant after each refinement step
   std::string ruling_file = ""; // if non-empty, write the ruling relation to this file as text
+  bool use_solution_cache = true; // if false, never reuse a previously solved approximation with the same remaining
+                                  // parameters (pbesfindabs disables this so every set is solved independently)
 };
 
 // True when the ruling relation is needed: to prioritise parameters, enforce the

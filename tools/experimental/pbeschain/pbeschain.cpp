@@ -44,6 +44,7 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
       m_options.timeout = parser.option_argument_as<double>("timeout");
       m_options.pvi_pp_factor = parser.option_argument_as<double>("pvi-pp-factor");
       m_options.quantifier_free = parser.has_option("quantifier-free");
+      m_options.quantifier_free_pvis = parser.has_option("quantifier-free-pvis");
       m_options.avoid_alternating = parser.has_option("avoid-alternating");
       m_options.rewrite_only_substitution = parser.has_option("rewrite-only-substitution");
       m_options.srf_factor = parser.option_argument_as<double>("srf-factor");
@@ -81,6 +82,8 @@ class pbeschain_tool: public pbes_input_tool<pbes_output_tool<pbes_rewriter_tool
                   "0 means no limit.");
       desc.add_option("quantifier-free",
                   "Do not chain if the unfolded formula contains any quantifier.");
+      desc.add_option("quantifier-free-pvis",
+                  "Do not chain if a PVI parameter depends on a bound (quantified) variable.");
       desc.add_option("avoid-alternating",
                   "Do not chain if the unfolded formula contains a PVI with a different name than the current equation. So X(a) -> Y(b) is not allowed.");
       desc.add_option("rewrite-only-substitution",

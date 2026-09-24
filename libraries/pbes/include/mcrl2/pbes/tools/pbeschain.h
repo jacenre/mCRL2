@@ -51,6 +51,7 @@ struct pbeschain_options
   double pvi_pp_factor = 0.0; // factor of the maximum size the chained predicate formula should be after chaining
                               // compared to the size of the original PVI.
   bool quantifier_free = false;
+  bool quantifier_free_pvis = false;
   bool avoid_alternating = false;
   bool rewrite_only_substitution = false;
   std::size_t max_number_pvi = 1;
@@ -424,6 +425,39 @@ inline bool is_quantifier_free(pbes_expression& phi, pbeschain_options options)
   return !(options.quantifier_free) || (find_all_variables(phi).size() - find_free_variables(phi).size()) == 0;
 }
 
+// True if no PVI parameter depends on a bound (quantified) variable in phi.
+inline bool is_quantifier_free_pvis(pbes_expression& phi, pbeschain_options options)
+{
+  if (!options.quantifier_free_pvis)
+  {
+    return true;
+  }
+
+  std::set<data::variable> bound_variables = find_all_variables(phi);
+  for (const data::variable& v: find_free_variables(phi))
+  {
+    bound_variables.erase(v);
+  }
+
+  if (bound_variables.empty())
+  {
+    return true;
+  }
+
+  for (const propositional_variable_instantiation& pvi: find_propositional_variable_instantiations(phi))
+  {
+    for (const data::variable& v: data::find_all_variables(pvi.parameters()))
+    {
+      if (bound_variables.contains(v))
+      {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 inline bool
 is_not_too_big(pbeschain_options& options, propositional_variable_instantiation& cur_x, pbes_expression& phi)
 {
@@ -596,6 +630,12 @@ inline void self_substitute(pbes_equation& equation,
 
         if (condition_result)
         {
+          condition_result
+            = measure_time(timer, "is_quantifier_free_pvis", [&]() { return is_quantifier_free_pvis(phi, options); });
+        }
+
+        if (condition_result)
+        {
           std::set<propositional_variable_instantiation> phi_set(phi_vector.begin(), phi_vector.end());
           bool all_in_path = true;
           measure_time(timer, "successful_substitutions", [&]() { return true; });
@@ -677,7 +717,7 @@ inline void self_substitute(pbes_equation& equation,
             }
           }
         }
-        else if (size == 0 && is_quantifier_free(phi, options))
+        else if (size == 0 && is_quantifier_free(phi, options) && is_quantifier_free_pvis(phi, options))
         {
           pvi_substituter.set_pvi(cur_x);
           pvi_substituter.set_replacement(phi);

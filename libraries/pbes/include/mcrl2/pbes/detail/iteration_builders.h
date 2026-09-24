@@ -14,21 +14,115 @@
 #define MCRL2_PBES_DETAIL_ITERATION_BUILDERS_H
 
 #include "mcrl2/data/bool.h"
+#include "mcrl2/data/set_identifier_generator.h"
+#include "mcrl2/pbes/find.h"
 #include "mcrl2/pbes/pbes_expression.h"
 #include "mcrl2/pbes/rewrite.h"
 #include "mcrl2/pbes/rewriter.h"
 
-
-
-
-
 namespace mcrl2::pbes_system::detail
 {
 
+// Alpha-renames bound variables in a pbes expression whose names occur in forbidden_names.
+// Free variables are left unchanged.
+struct rename_bound_variables_builder : public pbes_system::data_expression_builder<rename_bound_variables_builder>
+{
+  using super = pbes_system::data_expression_builder<rename_bound_variables_builder>;
+  using super::apply;
+
+  const std::set<core::identifier_string>& m_forbidden;
+  data::set_identifier_generator& m_id_generator;
+  std::vector<std::map<core::identifier_string, data::variable>> m_frames;
+
+  rename_bound_variables_builder(const std::set<core::identifier_string>& forbidden,
+    data::set_identifier_generator& id_generator)
+    : m_forbidden(forbidden),
+      m_id_generator(id_generator)
+  {}
+
+  data::variable_list rename_variables(const data::variable_list& vars,
+    std::map<core::identifier_string, data::variable>& frame)
+  {
+    std::vector<data::variable> new_vars;
+    new_vars.reserve(vars.size());
+    for (const data::variable& v: vars)
+    {
+      if (m_forbidden.contains(v.name()))
+      {
+        data::variable v1(m_id_generator(std::string(v.name())), v.sort());
+        frame[v.name()] = v1;
+        new_vars.push_back(v1);
+      }
+      else
+      {
+        new_vars.push_back(v);
+      }
+    }
+    return data::variable_list(new_vars.begin(), new_vars.end());
+  }
+
+  template<class T>
+  void apply(T& result, const data::variable& v)
+  {
+    for (auto it = m_frames.rbegin(); it != m_frames.rend(); ++it)
+    {
+      auto f = it->find(v.name());
+      if (f != it->end())
+      {
+        data::make_variable(result, f->second.name(), f->second.sort());
+        return;
+      }
+    }
+    data::make_variable(result, v.name(), v.sort());
+  }
+
+  template<class T>
+  void apply(T& result, const exists& x)
+  {
+    std::map<core::identifier_string, data::variable> frame;
+    data::variable_list new_vars = rename_variables(x.variables(), frame);
+    m_frames.push_back(frame);
+    pbes_expression body;
+    apply(body, x.body());
+    m_frames.pop_back();
+    mcrl2::pbes_system::make_exists(result, new_vars, body);
+  }
+
+  template<class T>
+  void apply(T& result, const forall& x)
+  {
+    std::map<core::identifier_string, data::variable> frame;
+    data::variable_list new_vars = rename_variables(x.variables(), frame);
+    m_frames.push_back(frame);
+    pbes_expression body;
+    apply(body, x.body());
+    m_frames.pop_back();
+    mcrl2::pbes_system::make_forall(result, new_vars, body);
+  }
+};
+
+inline pbes_expression rename_bound_variables_avoiding(const pbes_expression& phi,
+  const std::set<core::identifier_string>& forbidden)
+{
+  if (forbidden.empty())
+  {
+    return phi;
+  }
+
+  data::set_identifier_generator id_generator;
+  id_generator.add_identifiers(pbes_system::find_identifiers(phi));
+  id_generator.add_identifiers(forbidden);
+
+  rename_bound_variables_builder renamer(forbidden, id_generator);
+  pbes_expression result;
+  renamer.apply(result, phi);
+  return result;
+}
+
 // Substitutor to replace predicate variables OTHER than the self-referencing onces to functions from params to booleans
-template <template <class> class Builder>
+template<template<class> class Builder>
 struct replace_other_propositional_variables_with_functions_builder
-    : public Builder<replace_other_propositional_variables_with_functions_builder<Builder>>
+  : public Builder<replace_other_propositional_variables_with_functions_builder<Builder>>
 {
   using super = Builder<replace_other_propositional_variables_with_functions_builder<Builder>>;
   using super::apply;
@@ -40,30 +134,30 @@ struct replace_other_propositional_variables_with_functions_builder
   bool forward = true;
 
   explicit replace_other_propositional_variables_with_functions_builder(simplify_data_rewriter<data::rewriter>& r)
-      : m_pbes_rewriter(r)
+    : m_pbes_rewriter(r)
   {}
 
-  void set_name(const core::identifier_string& s) 
-  { 
-    name = s; 
+  void set_name(const core::identifier_string& s)
+  {
+    name = s;
   }
 
-  void set_forward(bool b) 
-  { 
-    forward = b; 
+  void set_forward(bool b)
+  {
+    forward = b;
   }
 
-  void reset_variable_list() 
-  { 
-    var_list = data::variable_list({}); 
+  void reset_variable_list()
+  {
+    var_list = data::variable_list({});
   }
 
-  data::variable_list get_variable_list() 
-  { 
-    return var_list; 
+  data::variable_list get_variable_list()
+  {
+    return var_list;
   }
 
-  template <class T>
+  template<class T>
   void apply(T& result, const pbes_expression& d)
   {
     if (forward)
@@ -116,13 +210,12 @@ struct replace_other_propositional_variables_with_functions_builder
             return;
           }
         }
-
       }
     }
     super::apply(result, d);
   }
 
-  template <class T>
+  template<class T>
   void apply(T& result, const propositional_variable_instantiation& x)
   {
     if (forward)
@@ -131,19 +224,19 @@ struct replace_other_propositional_variables_with_functions_builder
       // Based on uninterpreted functions theory (for BDDs for instance)
       data::data_expression_list params = x.parameters();
       atermpp::aterm_list term_list;
-      for (const auto& x : params)
+      for (const auto& x: params)
       {
         atermpp::aterm sort(x.sort());
         term_list.push_front(sort);
       }
-      term_list = reverse(term_list); 
+      term_list = reverse(term_list);
       data::sort_expression_list sort_list(term_list);
 
       if (sort_list.size() > 0)
       {
         data::sort_expression sort_expr = data::function_sort(sort_list, data::sort_bool::bool_());
         data::function_symbol fs = data::function_symbol(x.name(), sort_expr);
-        result =  atermpp::down_cast<T>(data::application(fs, x.parameters()));
+        result = atermpp::down_cast<T>(data::application(fs, x.parameters()));
         data::variable var = data::variable(x.name(), sort_expr);
         var_list.push_front(var);
       }
@@ -160,9 +253,9 @@ struct replace_other_propositional_variables_with_functions_builder
 };
 
 // Substitutor to target specific path, replace our specific pvi with a substituted CC
-template <template <class> class Builder>
+template<template<class> class Builder>
 struct substitute_propositional_variables_for_bools_builder
-    : public Builder<substitute_propositional_variables_for_bools_builder<Builder>>
+  : public Builder<substitute_propositional_variables_for_bools_builder<Builder>>
 {
   using super = Builder<substitute_propositional_variables_for_bools_builder<Builder>>;
   using super::apply;
@@ -172,13 +265,19 @@ struct substitute_propositional_variables_for_bools_builder
   pbes_expression m_replacement;
 
   explicit substitute_propositional_variables_for_bools_builder(simplify_data_rewriter<data::rewriter>& r)
-      : m_pbes_rewriter(r)
+    : m_pbes_rewriter(r)
   {}
 
-  void set_pvi(const propositional_variable_instantiation x) { m_pvi = x; }
-  void set_replacement(const pbes_expression x) { m_replacement = x; }
+  void set_pvi(const propositional_variable_instantiation x)
+  {
+    m_pvi = x;
+  }
+  void set_replacement(const pbes_expression x)
+  {
+    m_replacement = x;
+  }
 
-  template <class T>
+  template<class T>
   void apply(T& result, const propositional_variable_instantiation& x)
   {
     if (x == m_pvi)
@@ -193,7 +292,7 @@ struct substitute_propositional_variables_for_bools_builder
 };
 
 // Substitutor for the self_substitution / iterations
-template <template <class> class Builder>
+template<template<class> class Builder>
 struct substitute_propositional_variables_builder : public Builder<substitute_propositional_variables_builder<Builder>>
 {
   using super = Builder<substitute_propositional_variables_builder<Builder>>;
@@ -206,37 +305,37 @@ struct substitute_propositional_variables_builder : public Builder<substitute_pr
   bool m_stable = false;
 
   explicit substitute_propositional_variables_builder(simplify_data_rewriter<data::rewriter>& r)
-      : m_pbes_rewriter(r)
+    : m_pbes_rewriter(r)
   {}
 
-  void set_stable(bool b) 
-  { 
-    m_stable = b; 
+  void set_stable(bool b)
+  {
+    m_stable = b;
   }
 
-  bool stable() const 
-  { 
-    return m_stable; 
+  bool stable() const
+  {
+    return m_stable;
   }
 
-  void set_equation(const pbes_equation& eq) 
-  { 
-    m_eq = eq; 
+  void set_equation(const pbes_equation& eq)
+  {
+    m_eq = eq;
   }
 
-  void set_name(const core::identifier_string& s) 
-  { 
-    name = s; 
+  void set_name(const core::identifier_string& s)
+  {
+    name = s;
   }
 
-  template <class T>
+  template<class T>
   void apply(T& result, const propositional_variable_instantiation& x)
   {
     if (x.name() == m_eq.variable().name())
     {
       data::mutable_indexed_substitution sigma;
       data::data_expression_list pars = x.parameters();
-      for (const data::variable& v : m_eq.variable().parameters())
+      for (const data::variable& v: m_eq.variable().parameters())
       {
         data::data_expression par = pars.front();
         pars.pop_front();
@@ -251,8 +350,8 @@ struct substitute_propositional_variables_builder : public Builder<substitute_pr
       pbes_expression p = pbes_rewrite(m_eq.formula(), m_pbes_rewriter, sigma);
       std::set<propositional_variable_instantiation> set = find_propositional_variable_instantiations(p);
       if (std::all_of(set.begin(),
-              set.end(),
-              [this](const propositional_variable_instantiation& v) { return v.name() != m_eq.variable().name(); }))
+            set.end(),
+            [this](const propositional_variable_instantiation& v) { return v.name() != m_eq.variable().name(); }))
       {
         result = p;
         m_stable = false;
@@ -266,9 +365,5 @@ struct substitute_propositional_variables_builder : public Builder<substitute_pr
 };
 
 } // namespace mcrl2::pbes_system::detail
-
-
-
-
 
 #endif

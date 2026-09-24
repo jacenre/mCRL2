@@ -18,19 +18,17 @@
 #include "mcrl2/pbes/lps2pbes.h"
 #include "mcrl2/pbes/rewrite.h"
 #include "mcrl2/pbes/rewriter.h"
-#include "mcrl2/pbes/txt2pbes.h"
 #include "mcrl2/pbes/tools/pbeschain.h"
+#include "mcrl2/pbes/txt2pbes.h"
 
 using namespace mcrl2;
 using namespace mcrl2::pbes_system;
 
 BOOST_AUTO_TEST_CASE(test_pbesrewr1)
 {
-  std::string pbes_text =
-    "sort Enum = struct e1 | e2;                           \n"
-    "pbes mu X(n:Enum)=exists m1,m2:Enum.(X(m1) || X(m2)); \n"
-    "init X(e1);                                           \n"
-    ;
+  std::string pbes_text = "sort Enum = struct e1 | e2;                           \n"
+                          "pbes mu X(n:Enum)=exists m1,m2:Enum.(X(m1) || X(m2)); \n"
+                          "init X(e1);                                           \n";
   pbes p = txt2pbes(pbes_text);
   data::rewriter datar(p.data(), data::rewrite_strategy::jitty);
   enumerate_quantifiers_rewriter pbesr1(datar, p.data(), enumerate_quantifiers_mode::expand_infinite_sorts);
@@ -81,10 +79,10 @@ BOOST_AUTO_TEST_CASE(test_pbeschain2)
   std::cerr << "Original PBES:\n" << p << std::endl;
   std::cerr << "Going to substitute in rhs of equation: " << eq.formula() << std::endl;
 
-  std::cerr << "Free variables in expression to be substituted:\n " ;
+  std::cerr << "Free variables in expression to be substituted:\n ";
   for (const data::variable& var: find_free_variables(eq.formula()))
   {
-    std::cerr <<  var << " " << std::endl;
+    std::cerr << var << " " << std::endl;
   }
   std::cerr << "--- --- --- \n";
 
@@ -98,7 +96,7 @@ BOOST_AUTO_TEST_CASE(test_pbeschain2)
 
   std::cerr << "Rewritten pbes expression:\n" << p2 << std::endl;
 
-  std::cerr << "Free variables in expression:\n " ;
+  std::cerr << "Free variables in expression:\n ";
   const std::set<data::variable> free_variables = find_free_variables(p2);
   for (const data::variable& var: free_variables)
   {
@@ -106,28 +104,26 @@ BOOST_AUTO_TEST_CASE(test_pbeschain2)
   }
   std::cerr << "--- --- --- \n";
 
-  BOOST_CHECK(free_variables.size()==1);
+  BOOST_CHECK(free_variables.size() == 1);
 }
 
 // The test below checks whether the head of a term is rewritten too often.
 // If so, the variable vc_TS is substituted infinitely often causing the rewriting
-// of the PBES to not terminate. 
+// of the PBES to not terminate.
 
 BOOST_AUTO_TEST_CASE(test_pbesrewr3)
 {
-  std::string pbes_text =
-  "map VC_config: Nat -> Bool;"
-  "var  n: Nat;"
-  "eqn  VC_config(n)  =  false;"
-  "pbes nu Y(vc_TS: Nat -> Bool) = "
-         "val(vc_TS(1)) && (forall v_TS1: Nat. Y(vc_TS[v_TS1 -> true]));"
-  "init Y(VC_config);"
-  ;
-    
+  std::string pbes_text = "map VC_config: Nat -> Bool;"
+                          "var  n: Nat;"
+                          "eqn  VC_config(n)  =  false;"
+                          "pbes nu Y(vc_TS: Nat -> Bool) = "
+                          "val(vc_TS(1)) && (forall v_TS1: Nat. Y(vc_TS[v_TS1 -> true]));"
+                          "init Y(VC_config);";
+
   pbes p = txt2pbes(pbes_text);
   data::rewriter datar(p.data(), data::rewrite_strategy::jitty);
   simplify_data_rewriter<data::rewriter> pbesr(datar);
-    
+
   data::mutable_indexed_substitution sigma;
   pbes_equation equation = p.equations()[0];
   propositional_variable_instantiation pvi = *find_propositional_variable_instantiations(equation.formula()).begin();
@@ -135,14 +131,14 @@ BOOST_AUTO_TEST_CASE(test_pbesrewr3)
   sigma[var] = *pvi.parameters().begin();
   // With erroneous rewriting this does not terminate.
   pbes_rewrite(p, pbesr, sigma);
-  // After this rewrite p is not well typed anymore. 
+  // After this rewrite p is not well typed anymore.
 
 #ifdef MCRL2_ENABLE_JITTYC
-  // Now do ti again with the compiling rewriter. 
+  // Now do ti again with the compiling rewriter.
   data::rewriter datar_compiling(p.data(), data::rewrite_strategy::jitty_compiling);
   simplify_data_rewriter<data::rewriter> pbesr_compiling(datar_compiling);
   pbes_rewrite(p, pbesr_compiling, sigma);
-  // After this rewrite p is not well typed anymore. 
+  // After this rewrite p is not well typed anymore.
 
   BOOST_CHECK(true);
 #endif // MCRL2_ENABLE_JITTYC
@@ -150,23 +146,21 @@ BOOST_AUTO_TEST_CASE(test_pbesrewr3)
 
 // The test below checks whether the head of a term is rewritten too often.
 // If so, the variable vc_TS is substituted infinitely often causing the rewriting
-// of the PBES to not terminate. 
+// of the PBES to not terminate.
 
 BOOST_AUTO_TEST_CASE(test_pbesrewr4)
 {
-  std::string pbes_text =
-  "map VC_config: Nat -> Bool;"
-  "var  n: Nat;"
-  "eqn  VC_config(n)  =  false;"
-  "pbes nu Y(vc_TS: Nat -> Bool) = "
-         "val(vc_TS(1)) && (forall v_TS1: Nat. Y(vc_TS[v_TS1 -> vc_TS(v_TS1)]));"
-  "init Y(VC_config);"
-  ;
-    
+  std::string pbes_text = "map VC_config: Nat -> Bool;"
+                          "var  n: Nat;"
+                          "eqn  VC_config(n)  =  false;"
+                          "pbes nu Y(vc_TS: Nat -> Bool) = "
+                          "val(vc_TS(1)) && (forall v_TS1: Nat. Y(vc_TS[v_TS1 -> vc_TS(v_TS1)]));"
+                          "init Y(VC_config);";
+
   pbes p = txt2pbes(pbes_text);
   data::rewriter datar(p.data(), data::rewrite_strategy::jitty);
   simplify_data_rewriter<data::rewriter> pbesr(datar);
-    
+
   data::mutable_indexed_substitution sigma;
   pbes_equation equation = p.equations()[0];
   propositional_variable_instantiation pvi = *find_propositional_variable_instantiations(equation.formula()).begin();
@@ -174,15 +168,15 @@ BOOST_AUTO_TEST_CASE(test_pbesrewr4)
   sigma[var] = *pvi.parameters().begin();
   // With erroneous rewriting this does not terminate.
   pbes_rewrite(p, pbesr, sigma);
-  // After this rewrite p is not well typed anymore. 
+  // After this rewrite p is not well typed anymore.
 
 #ifdef MCRL2_ENABLE_JITTYC
-  // Now do it again with the compiling rewriter. 
+  // Now do it again with the compiling rewriter.
   data::rewriter datar_compiling(p.data(), data::rewrite_strategy::jitty_compiling);
   simplify_data_rewriter<data::rewriter> pbesr_compiling(datar_compiling);
   std::cerr << "COMPILING TEST4 " << (*pvi.parameters().begin()) << "\n";
-  pbes_rewrite(p, pbesr_compiling, sigma); 
-  // After this rewrite p is not well typed anymore. 
+  pbes_rewrite(p, pbesr_compiling, sigma);
+  // After this rewrite p is not well typed anymore.
   std::cerr << "PBES2" << p << "\n";
 
   BOOST_CHECK(true);

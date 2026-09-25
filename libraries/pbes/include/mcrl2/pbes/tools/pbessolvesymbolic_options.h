@@ -33,12 +33,12 @@ namespace mcrl2::pbes_system
 /// Lace and Sylvan runtime settings.
 struct pbessolvesymbolic_runtime_options
 {
-  std::optional<std::size_t> threads; // nullopt means "not specified"
+  std::optional<std::size_t> threads; 
   std::size_t lace_dqsize = 1024 * 1024 * 4; // length of the Lace task queue
-  std::size_t lace_stacksize = 0; // program stack size in gigabytes (0 = default)
+  std::size_t lace_stacksize = 0; // program stack size in gigabytes 
   std::size_t memory_limit = 3; // Sylvan memory limit in gigabytes
-  std::size_t initial_ratio = 16; // power-of-two ratio of initial and maximum table size
-  std::size_t table_ratio = 1; // power-of-two ratio of node table and cache table
+  std::size_t initial_ratio = 16; 
+  std::size_t table_ratio = 1; 
 };
 
 /// Options that only apply to a spawned pbessolvesymbolic.
@@ -341,7 +341,13 @@ inline pbessolvesymbolic_settings parse_solve_symbolic_args(const std::string& a
   data::add_rewriter_options(desc);
   desc.add_option("threads", mcrl2::utilities::make_mandatory_argument("NUM"), "run with NUM threads (default=1).");
 
-  const std::string command_line = "pbessolvesymbolic " + args;
+  // Trailing spaces would make the tokenizer in command_line_parser read past the end of the
+  // command line; the bare "pbessolvesymbolic " prefix already ends in one when args is empty.
+  std::string command_line = "pbessolvesymbolic " + args;
+  while (!command_line.empty() && command_line.back() == ' ')
+  {
+    command_line.pop_back();
+  }
   try
   {
     mcrl2::utilities::command_line_parser parser(desc, command_line.c_str());

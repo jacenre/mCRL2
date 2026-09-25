@@ -195,10 +195,16 @@ class pbesreach_algorithm
     }
 
   public:
-    pbesreach_algorithm(const pbes_system::srf_pbes& srf_pbes, const symbolic_reachability_options& options_)
+    pbesreach_algorithm(const pbes_system::srf_pbes& srf_pbes,
+      const symbolic_reachability_options& options_,
+      const data::rewriter* shared_rewriter = nullptr)
       : m_options(options_),
         m_pbes(internal_preprocess(srf_pbes, options_.make_total)),
-        m_rewr(symbolic::construct_rewriter(m_pbes.data(), m_options.rewrite_strategy, pbes_system::find_function_symbols(m_pbes.to_pbes()), m_options.remove_unused_rewrite_rules)),
+        m_rewr(shared_rewriter != nullptr ? *shared_rewriter
+                                          : symbolic::construct_rewriter(m_pbes.data(),
+                                              m_options.rewrite_strategy,
+                                              pbes_system::find_function_symbols(m_pbes.to_pbes()),
+                                              m_options.remove_unused_rewrite_rules)),
         m_enumerator(m_rewr, m_pbes.data(), m_rewr, m_id_generator, false)
     {
       if (!m_options.srf.empty())

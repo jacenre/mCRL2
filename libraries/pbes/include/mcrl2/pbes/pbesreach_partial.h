@@ -25,9 +25,11 @@ class pbesreach_algorithm_partial : public pbesreach_algorithm
 {
 public:
 
-  pbesreach_algorithm_partial(const srf_pbes& pbesspec, const symbolic_reachability_options& options_)
-    : pbesreach_algorithm(pbesspec, options_),
-    m_partial_solution(symbolic_solution_t(options_.compute_strategy))
+  pbesreach_algorithm_partial(const srf_pbes& pbesspec,
+    const symbolic_reachability_options& options_,
+    const data::rewriter* shared_rewriter = nullptr)
+    : pbesreach_algorithm(pbesspec, options_, shared_rewriter),
+      m_partial_solution(symbolic_solution_t(options_.compute_strategy))
   {}
 
   void on_end_while_loop() override

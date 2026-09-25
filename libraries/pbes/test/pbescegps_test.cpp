@@ -13,6 +13,7 @@
 #define BOOST_TEST_MODULE pbescegps_test
 #include <boost/test/included/unit_test.hpp>
 
+#include "mcrl2/data/parse.h"
 #include "mcrl2/data/pos.h"
 #include "mcrl2/pbes/detail/pbescegps_utilities.h"
 #include "mcrl2/pbes/pbes.h"
@@ -377,5 +378,29 @@ BOOST_AUTO_TEST_CASE(test_lazy_symbolic_reachability_options)
 
   opts.solve_symbolic_args = "--file=example.lps";
   BOOST_CHECK_THROW(lazy_symbolic_reachability_options(opts), mcrl2::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(test_lazy_shared_rewriter_data_specification)
+{
+  const std::string text = "pbes nu Y(a: Bool) = val(a) || Y(!a); init Y(false);";
+  for (var_choice_strategy var_choice: {var_choice_strategy::lhs, var_choice_strategy::ruling})
+  {
+    pbes p = txt2pbes(text, false);
+    pbescegps_options options = default_options();
+    options.solve_symbolic_lazy = true;
+    options.var_choice = var_choice;
+    const symbolic_reachability_options reach_options = lazy_symbolic_reachability_options(options);
+    const data::data_specification data_spec = lazy_symbolic_rewriter_data_specification(p, options, reach_options);
+    const data::basic_sort propvar_sort("PropositionalVariable");
+    const data::function_symbol y("Y", propvar_sort);
+    const data::rewriter rewriter(data_spec, data::jitty);
+
+    for (const data::function_symbol& constructor: data_spec.constructors(propvar_sort))
+    {
+      const data::data_expression equality
+        = data::parse_data_expression(data::pp(y) + " == " + data::pp(constructor), data_spec);
+      BOOST_CHECK_EQUAL(rewriter(equality) == data::sort_bool::true_(), constructor == y);
+    }
+  }
 }
 #endif

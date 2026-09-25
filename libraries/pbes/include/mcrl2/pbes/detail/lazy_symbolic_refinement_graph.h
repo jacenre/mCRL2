@@ -122,19 +122,22 @@ class symbolic_approximation
 
   // Solve strategies 1-7 use the partial solving reach algorithm.
   static std::unique_ptr<pbesreach_algorithm> make_reach_algorithm(const srf_pbes& srf,
-    const symbolic_reachability_options& options)
+    const symbolic_reachability_options& options,
+    const data::rewriter* shared_rewriter)
   {
     if (options.solve_strategy != 0)
     {
-      return std::make_unique<pbesreach_algorithm_partial>(srf, options);
+      return std::make_unique<pbesreach_algorithm_partial>(srf, options, shared_rewriter);
     }
-    return std::make_unique<pbesreach_algorithm>(srf, options);
+    return std::make_unique<pbesreach_algorithm>(srf, options, shared_rewriter);
   }
 
 public:
-  symbolic_approximation(const pbes& p, const symbolic_reachability_options& options)
+  symbolic_approximation(const pbes& p,
+    const symbolic_reachability_options& options,
+    const data::rewriter* shared_rewriter = nullptr)
     : m_options(options),
-      m_reach(make_reach_algorithm(make_srf_pbes(p, m_options), m_options)),
+      m_reach(make_reach_algorithm(make_srf_pbes(p, m_options), m_options, shared_rewriter)),
       m_solution(true)
   {
     m_reach->run();

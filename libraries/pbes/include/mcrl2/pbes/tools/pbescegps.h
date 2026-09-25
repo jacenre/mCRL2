@@ -110,6 +110,26 @@ inline symbolic_reachability_options lazy_symbolic_reachability_options(const pb
   }
   return o;
 }
+
+inline data::data_specification lazy_symbolic_rewriter_data_specification(const pbes& p,
+  const pbescegps_options& options,
+  const symbolic_reachability_options& reach_options)
+{
+  pbes symbolic_source = p;
+  if (needs_ruling_relation(options))
+  {
+    algorithms::normalize(symbolic_source);
+    symbolic_source = pbes2srf(symbolic_source, true).to_pbes();
+    algorithms::normalize(symbolic_source);
+  }
+  srf_pbes srf = detail::make_srf_pbes(symbolic_source, reach_options);
+  if (reach_options.split_conditions > 0)
+  {
+    srf = split_conditions(srf, reach_options.split_conditions);
+  }
+  return data::merge_data_specifications(srf.data(),
+    construct_propositional_variable_data_specification(srf, "PropositionalVariable"));
+}
 #endif
 
 struct pbescegps_iterator
@@ -124,6 +144,9 @@ private:
   std::map<core::identifier_string, std::map<data::variable, std::size_t>> m_var_count_cache;
 
   // Shared data rewriter, created once from the data specification and reused throughout the tool
+#ifdef MCRL2_ENABLE_SYLVAN
+  std::optional<data::data_specification> m_datar_spec;
+#endif
   std::optional<data::rewriter> m_datar;
 
   // Cache of approximation results, keyed by the parameters remaining in each equation
@@ -889,9 +912,6 @@ public:
 
   bool run_cegps_algorithm(pbes& p, pbescegps_options options, abstract_param_state& final_state)
   {
-    // Create the data rewriter once.
-    m_datar.emplace(p.data(), options.rewrite_strategy);
-
 #ifndef MCRL2_ENABLE_SYLVAN
     if (options.solve_symbolic_lazy)
     {
@@ -906,6 +926,25 @@ public:
     {
       lazy_reach_options = lazy_symbolic_reachability_options(options);
     }
+#endif
+
+    m_datar.reset();
+#ifdef MCRL2_ENABLE_SYLVAN
+    m_datar_spec.reset();
+    if (options.solve_symbolic_lazy && lazy_reach_options.rewrite_strategy == options.rewrite_strategy)
+    {
+      m_datar_spec.emplace(lazy_symbolic_rewriter_data_specification(p, options, lazy_reach_options));
+      m_datar.emplace(*m_datar_spec, options.rewrite_strategy);
+    }
+    else
+#endif
+    {
+      m_datar.emplace(p.data(), options.rewrite_strategy);
+    }
+#ifdef MCRL2_ENABLE_SYLVAN
+    const data::rewriter* lazy_shared_rewriter
+      = options.solve_symbolic_lazy && lazy_reach_options.rewrite_strategy == options.rewrite_strategy ? &*m_datar
+                                                                                                       : nullptr;
 #endif
 
     // Compute the ruling relation on an SRF PBES: its summands match the
@@ -977,7 +1016,7 @@ public:
         if (options.solve_symbolic_lazy)
         {
 #ifdef MCRL2_ENABLE_SYLVAN
-          detail::symbolic_approximation approx(p, lazy_reach_options);
+          detail::symbolic_approximation approx(p, lazy_reach_options, lazy_shared_rewriter);
           return approx.result();
 #else
           throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -1000,7 +1039,8 @@ public:
 #ifdef MCRL2_ENABLE_SYLVAN
         under_solver
           = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, false, options),
-            lazy_reach_options);
+            lazy_reach_options,
+            lazy_shared_rewriter);
         under_result = under_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -1032,7 +1072,8 @@ public:
 #ifdef MCRL2_ENABLE_SYLVAN
         over_solver
           = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, true, options),
-            lazy_reach_options);
+            lazy_reach_options,
+            lazy_shared_rewriter);
         over_result = over_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");

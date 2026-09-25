@@ -351,3 +351,31 @@ BOOST_AUTO_TEST_CASE(test_structure_graph_binary_keeps_function_symbol_sort)
   BOOST_CHECK_EQUAL(before.str(), after.str());
 }
 #endif
+
+#ifdef MCRL2_ENABLE_SYLVAN
+BOOST_AUTO_TEST_CASE(test_lazy_symbolic_reachability_options)
+{
+  pbescegps_options opts;
+  opts.solve_symbolic_lazy = true;
+  opts.rewrite_strategy = data::jitty_prover;
+
+  symbolic_reachability_options reach = lazy_symbolic_reachability_options(opts);
+  BOOST_CHECK(reach.rewrite_strategy == data::jitty_prover);
+  BOOST_CHECK(reach.compute_strategy);
+
+  opts.solve_symbolic_args = "-rjitty --max-iterations=7 --solve-strategy=2 --cached";
+  reach = lazy_symbolic_reachability_options(opts);
+  BOOST_CHECK(reach.rewrite_strategy == data::jitty);
+  BOOST_CHECK_EQUAL(reach.max_iterations, 7u);
+  BOOST_CHECK_EQUAL(reach.solve_strategy, 2u);
+  BOOST_CHECK(reach.cached);
+  BOOST_CHECK(reach.compute_strategy);
+
+  opts.solve_symbolic_args = "--solve-strategy=5";
+  reach = lazy_symbolic_reachability_options(opts);
+  BOOST_CHECK_EQUAL(reach.solve_strategy, 0u);
+
+  opts.solve_symbolic_args = "--file=example.lps";
+  BOOST_CHECK_THROW(lazy_symbolic_reachability_options(opts), mcrl2::runtime_error);
+}
+#endif

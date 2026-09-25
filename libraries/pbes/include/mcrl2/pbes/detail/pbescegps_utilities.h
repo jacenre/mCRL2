@@ -117,7 +117,7 @@ struct pbescegps_options
   bool symbolic_structure_graph_complete = false; // build the complete graph symbolically
   bool stategraph = false;
   var_choice_strategy var_choice = var_choice_strategy::lhs;
-  std::string solve_symbolic_args = "";
+  std::string solve_symbolic_args = ""; // arguments for the symbolic solver
   std::size_t number_of_threads = 1;
   std::string initial_state_file = ""; // if non-empty, read the initial abstraction state from this file
   bool instantiate_infinite_quantifier_guards = false; // if true, do not abstract parameters that occur in the

@@ -50,6 +50,7 @@
 #ifdef MCRL2_ENABLE_SYLVAN
 #include "mcrl2/pbes/detail/lazy_symbolic_refinement_graph.h"
 #include "mcrl2/pbes/pbesreach.h"
+#include "mcrl2/pbes/tools/pbessolvesymbolic_options.h"
 #include "mcrl2/pbes/tools/pbesstategraph_options.h"
 #endif
 #include "mcrl2/pbes/pbessolve_options.h"
@@ -91,17 +92,22 @@ inline std::string structure_graph_temp_path()
 }
 
 #ifdef MCRL2_ENABLE_SYLVAN
-// Maps the tool options onto the symbolic reachability options used in-process.
-// Mirrors the flags that pbescegps forwards to pbessolvesymbolic in child mode.
+// Maps the tool options, including --solve-symbolic-args, onto the in-process symbolic
+// reachability options.
 inline symbolic_reachability_options lazy_symbolic_reachability_options(const pbescegps_options& options)
 {
-  symbolic_reachability_options o;
-  o.rewrite_strategy = options.rewrite_strategy;
+  const pbessolvesymbolic_settings settings
+    = parse_solve_symbolic_args(options.solve_symbolic_args, options.rewrite_strategy);
+  symbolic_reachability_options o = settings.reach;
   o.compute_strategy = true;
-  o.one_point_rule_rewrite = true;
-  o.remove_unused_rewrite_rules = true;
-  o.detect_deadlocks = true;
-  o.max_workers = 1;
+  if (o.solve_strategy == 5 || o.solve_strategy == 6)
+  {
+    // Fatal attractor partial solving does not provide the strategy refinement needs.
+    mCRL2log(log::warning) << "Warning: Cannot use partial solving using fatal attractor solving (solve strategies 5 "
+                              "and 6) with --symbolic-structure-graph-lazy, using solving strategy 0 instead."
+                           << std::endl;
+    o.solve_strategy = 0;
+  }
   return o;
 }
 #endif
@@ -893,6 +899,15 @@ public:
     }
 #endif
 
+#ifdef MCRL2_ENABLE_SYLVAN
+    // Parse --solve-symbolic-args once, up front.
+    symbolic_reachability_options lazy_reach_options;
+    if (options.solve_symbolic_lazy)
+    {
+      lazy_reach_options = lazy_symbolic_reachability_options(options);
+    }
+#endif
+
     // Compute the ruling relation on an SRF PBES: its summands match the
     // transitions and equations of the symbolic structure graphs.
     if (needs_ruling_relation(options))
@@ -962,7 +977,7 @@ public:
         if (options.solve_symbolic_lazy)
         {
 #ifdef MCRL2_ENABLE_SYLVAN
-          detail::symbolic_approximation approx(p, lazy_symbolic_reachability_options(options));
+          detail::symbolic_approximation approx(p, lazy_reach_options);
           return approx.result();
 #else
           throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -985,7 +1000,7 @@ public:
 #ifdef MCRL2_ENABLE_SYLVAN
         under_solver
           = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, false, options),
-            lazy_symbolic_reachability_options(options));
+            lazy_reach_options);
         under_result = under_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -1017,7 +1032,7 @@ public:
 #ifdef MCRL2_ENABLE_SYLVAN
         over_solver
           = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, true, options),
-            lazy_symbolic_reachability_options(options));
+            lazy_reach_options);
         over_result = over_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");

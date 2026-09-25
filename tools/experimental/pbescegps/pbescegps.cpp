@@ -59,7 +59,14 @@ bool pbescegps_lazy(const std::string& input_filename,
   const utilities::file_format& input_format,
   const pbescegps_options& options)
 {
-  detail::sylvan_runtime runtime(options.number_of_threads);
+  const pbessolvesymbolic_settings settings
+    = parse_solve_symbolic_args(options.solve_symbolic_args, options.rewrite_strategy);
+  detail::sylvan_runtime runtime(settings.runtime.threads.value_or(options.number_of_threads),
+    settings.runtime.memory_limit,
+    settings.runtime.initial_ratio,
+    settings.runtime.table_ratio,
+    settings.runtime.lace_dqsize,
+    settings.runtime.lace_stacksize);
   pbescegps_lazy_task_args args{.input_filename = &input_filename,
     .input_format = &input_format,
     .options = &options,
@@ -131,9 +138,13 @@ protected:
       's');
     desc.add_option("solve-symbolic-args",
       utilities::make_optional_argument("STR", ""),
-      "Solve the PBES symbolically using the following arguments, which are passed verbatim to pbessolvesymbolic. "
-      "The outer -r/--rewriter option is not forwarded, so the rewriter for the symbolic solver must be set here "
-      "explicitly (e.g. -rjittyc); it defaults to the rewriter of pbessolvesymbolic itself.");
+      "Solve the PBES symbolically using the following arguments. Without "
+      "--symbolic-structure-graph-lazy they are passed verbatim to pbessolvesymbolic; the outer -r/--rewriter option "
+      "is not forwarded there, so the rewriter for the symbolic solver must be set here explicitly (e.g. -rjittyc); it "
+      "defaults to the rewriter of pbessolvesymbolic itself. With --symbolic-structure-graph-lazy the same arguments "
+      "are parsed in-process instead: they configure the in-process symbolic solver, the outer -r/--rewriter is their "
+      "default, --threads sets the number of Lace workers, and options that only a spawned pbessolvesymbolic can act "
+      "on (--file, --evidence-file, --structure-graph-*, --info) are rejected.");
     desc.add_option("symbolic-structure-graph",
       "Build the structure graph directly from the symbolic game and its winning strategy, instead of "
       "the second (explicit) instantiation in pbessolvesymbolic.");
@@ -145,8 +156,8 @@ protected:
     desc.add_option("symbolic-structure-graph-lazy",
       "Solve each approximation in-process (one Sylvan runtime for the whole run) and let refinement "
       "lazily query the symbolic winning region instead of materialising a structure graph. This is the "
-      "in-process symbolic refinement mode. It does not spawn pbessolvesymbolic and ignores "
-      "--solve-symbolic-args; requires a build with Sylvan enabled.");
+      "in-process symbolic refinement mode. It does not spawn pbessolvesymbolic; --solve-symbolic-args are "
+      "parsed in-process instead, where options that only a spawned pbessolvesymbolic can act on are rejected. ");
     desc.add_option("var-choice",
       utilities::make_enum_argument<var_choice_strategy>("STRATEGY")
         .add_value_desc(var_choice_strategy::lhs, "The variable order of the left-hand side of the equation.", true)

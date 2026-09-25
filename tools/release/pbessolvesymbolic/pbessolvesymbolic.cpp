@@ -31,6 +31,7 @@
 #include "mcrl2/pbes/srf_pbes.h"
 #include "mcrl2/pbes/structure_graph_io.h"
 #include "mcrl2/pbes/symbolic_pbessolve.h"
+#include "mcrl2/pbes/tools/pbessolvesymbolic_options.h"
 #include "mcrl2/pbes/unify_parameters.h"
 #include "mcrl2/utilities/exception.h"
 #include "mcrl2/utilities/execution_timer.h"
@@ -448,270 +449,19 @@ class pbessolvesymbolic_tool : public parallel_tool<rewriter_tool<input_output_t
   using super = parallel_tool<rewriter_tool<input_output_tool>>;
 
 protected:
-  pbes_system::symbolic_reachability_options options;
-
-  // Lace options
-  std::size_t lace_dqsize = static_cast<std::size_t>(1024 * 1024 * 4); // set large default
-  std::size_t lace_stacksize = 0; // use default
-
-  // Sylvan options
-  std::size_t memory_limit = 3;
-  std::size_t initial_ratio = 16;
-  std::size_t table_ratio = 1;
-
-  // Counter example options.
-  std::string lpsfile;
-  std::string ltsfile;
-  std::string evidence_file;
-
-  // If non-empty, the strategy-guided structure graph is written here in binary.
-  std::string structure_graph_file;
+  // Parsed by parse_options through the shared helpers in pbessolvesymbolic_options.h.
+  pbes_system::pbessolvesymbolic_settings m_settings;
 
   void add_options(utilities::interface_description& desc) override
   {
     super::add_options(desc);
-    desc.add_option("lace-dqsize",
-      utilities::make_optional_argument("NUM", "4194304"),
-      "set the length of Lace task queue (default 1024*1024*4)");
-    desc.add_option("lace-stacksize",
-      utilities::make_optional_argument("NUM", "0"),
-      "set the size of Sylvan program stack in gigabytes (0=default stack size). "
-      "This is the main stack for all calculations. If it is too small a bus error occurs. ");
-    desc.add_option("memory-limit",
-      utilities::make_optional_argument("NUM", "3"),
-      "Sylvan memory limit in gigabytes (default 3)",
-      'm');
-
-    desc.add_option("cached", "use transition group caching to speed up state space exploration");
-    desc.add_option("chaining",
-      "reduce the amount of breadth-first iterations by applying the transition groups consecutively");
-    desc.add_option("groups",
-      utilities::make_optional_argument("GROUPS", "none"),
-      "'none' (default) no summand groups\n"
-      "'used' summands with the same variables are joined\n"
-      "'simple' summands with the same read/write variables are joined\n"
-      "a user defined list of summand groups separated by semicolons, e.g. '0; 1 3 4; 2 5'");
-    desc.add_option("reorder",
-      utilities::make_optional_argument("ORDER", "none"),
-      "'none' (default) no variable reordering\n"
-      "'random' variables are put in a random order\n"
-      "'weighted' variables are put in an order defined by their connectivity weight\n"
-      "'a user defined permutation e.g. '1 3 2 0 4'");
-    desc.add_option("info", "print read/write information of the summands");
-    desc.add_option("max-iterations",
-      utilities::make_optional_argument("NUM", "0"),
-      "limit number of breadth-first iterations to NUM");
-    desc.add_option("print-exact",
-      "prints the sizes of LDDs exactly when within the representable range, and in scientific notation otherwise");
-    desc.add_option("print-nodesize",
-      "print the number of LDD nodes in addition to the number of elements represented as 'elements[nodes]'");
-    desc.add_option("saturation",
-      "reduce the amount of breadth-first iterations by applying the transition groups until fixed point");
-    desc.add_option("solve-strategy",
-      utilities::make_enum_argument<int>("NUM")
-        .add_value_desc(0, "No on-the-fly solving is applied", true)
-        .add_value_desc(1, "Detect solitair winning cycles.")
-        .add_value_desc(2, "Detect solitair winning cycles with safe attractors.")
-        .add_value_desc(3, "Detect forced winning cycles.")
-        .add_value_desc(4, "Detect forced winning cycles with safe attractors.")
-        .add_value_desc(5, "Detect fatal attractors.")
-        .add_value_desc(6, "Detect fatal attractors with safe attractors.")
-        .add_value_desc(7, "Solve subgames using a Zielonka solver."),
-      "Use solve strategy NUM. All strategies except 0 periodically apply on-the-fly solving, which may lead to early "
-      "termination.",
-      's');
-    desc.add_option("split-conditions",
-      "split disjunctive conditions to obtain more summands with potentially less dependencies",
-      'c');
-    desc.add_option("total", "make the SRF PBES total", 't');
-    desc.add_option("reset", "set constant values when introducing parameters");
-
-    desc.add_option("file",
-      utilities::make_file_argument("NAME"),
-      "The file containing the LPS or LTS that was used to "
-      "generate the PBES using lps2pbes -c. If this "
-      "option is set, a counter example or witness for the "
-      "encoded property will be generated. The "
-      "extension of the file should be .lps in case of an LPS "
-      "file, in all other cases it is assumed to "
-      "be an LTS.",
-      'f');
-    desc.add_option("evidence-file",
-      utilities::make_file_argument("NAME"),
-      "The file to which the evidence is written. If not set, a "
-      "default name will be chosen.");
-
-    desc.add_hidden_option("structure-graph-out",
-      utilities::make_file_argument("NAME"),
-      "Write the strategy-guided structure graph to NAME in binary format. Forces the second instantiation "
-      "even when the PBES has no counter example information.");
-
-    desc.add_hidden_option("aggressive", "apply on-the-fly solving after every iteration to detect bugs");
-    desc.add_hidden_option("check-strategy", "do a sanity check on the computed strategy", 'y');
-    desc.add_hidden_option("no-remove-unused-rewrite-rules", "do not remove unused rewrite rules. ", 'u');
-    desc.add_hidden_option("no-one-point-rule-rewrite", "do not apply the one point rule rewriter");
-    desc.add_hidden_option("no-discard", "do not discard any parameters");
-    desc.add_hidden_option("no-read", "do not discard only-read parameters");
-    desc.add_hidden_option("no-write", "do not discard only-write parameters");
-    desc.add_hidden_option("no-relprod", "use an inefficient alternative version of relprod (for debugging)");
-    desc.add_hidden_option("initial-ratio",
-      utilities::make_optional_argument("NUM", "16"),
-      "power-of-two ratio of initial and maximum table size (default 16)");
-    desc.add_hidden_option("table-ratio",
-      utilities::make_optional_argument("NUM", "16"),
-      "power-of-two ratio of node table and cache table (default 1)");
-    desc.add_hidden_option("srf",
-      utilities::make_optional_argument("FILE", ""),
-      "save the preprocessed PBES in SRF format");
-    desc.add_hidden_option("dot",
-      utilities::make_optional_argument("FILE", ""),
-      "print the LDD of the parity game in dot format");
-    desc.add_hidden_option("split-conditions-unsafe",
-      utilities::make_optional_argument("NUM", "0"),
-      "split conditions to obtain more summands (and equations) with potentially less dependencies\n"
-      "0 (default) no splitting performed.\n"
-      "1 only split disjunctive conditions, same as --split-conditions.\n"
-      "2 also split conjunctive conditions into multiple equations which weakens guards and introduces more reachable "
-      "BES equations. Note that splitting conditions can lead to expressions that cannot be rewritten if the equations "
-      "are not sufficiently complete.\n"
-      "3 alternative split for conjunctive conditions where even more states can become reachable.");
-    desc.add_hidden_option("naive-counter-example-instantiation",
-      "run the naive instantiation algorithm for pbes with counter example information");
-    desc.add_hidden_option("structure-graph-symbolic",
-      "build the structure graph directly from the symbolic game and strategy, without the second "
-      "(explicit) instantiation. Only used together with --structure-graph-out and when no evidence "
-      "is requested.");
-    desc.add_hidden_option("structure-graph-complete",
-      "like --structure-graph-symbolic, but materialise every successor in the winning region instead "
-      "of pruning the walk to one winner strategy successor. Only used together with --structure-graph-out "
-      "and when no evidence is requested.");
-    desc.add_hidden_option("no-determinize-strategy",
-      "do not restrict the strategy to a single successor per vertex during the second "
-      "instantiation. Keeping one successor is sound because every edge that the symbolic solver "
-      "records stays within the winning region, so each of them is a winning move; "
-      "this option explores considerably more vertices and is meant for debugging a failure of "
-      "that invariant.");
+    pbes_system::add_pbessolvesymbolic_options(desc);
   }
 
   void parse_options(const utilities::command_line_parser& parser) override
   {
     super::parse_options(parser);
-    options.aggressive = parser.has_option("aggressive");
-    options.cached = parser.has_option("cached");
-    options.chaining = parser.has_option("chaining");
-    options.check_strategy = parser.has_option("check-strategy");
-    options.one_point_rule_rewrite = !parser.has_option("no-one-point-rule-rewrite");
-    options.print_exact = parser.has_option("print-exact");
-    options.print_nodesize = parser.has_option("print-nodesize");
-    options.remove_unused_rewrite_rules = !parser.has_option("no-remove-unused-rewrite-rules");
-    options.replace_constants_by_variables = false; // This option doesn't work in the current implementation
-    options.saturation = parser.has_option("saturation");
-    options.no_discard = parser.has_option("no-discard");
-    options.no_discard_read = parser.has_option("no-read");
-    options.no_discard_write = parser.has_option("no-write");
-    options.no_relprod = parser.has_option("no-relprod");
-    options.info = parser.has_option("info");
-    options.summand_groups = parser.option_argument("groups");
-    options.variable_order = parser.option_argument("reorder");
-    options.make_total = parser.has_option("total");
-    options.reset_parameters = parser.has_option("reset");
-    options.naive_counter_example_instantiation = parser.has_option("naive-counter-example-instantiation");
-    options.determinize_strategy = !parser.has_option("no-determinize-strategy");
-    options.symbolic_structure_graph = parser.has_option("structure-graph-symbolic");
-    options.symbolic_structure_graph_complete = parser.has_option("structure-graph-complete");
-    if (!options.make_total)
-    {
-      options.detect_deadlocks = true; // This is a required setting if the pbes is not total.
-    }
-    options.srf = parser.option_argument("srf");
-    options.rewrite_strategy = rewrite_strategy();
-    options.dot_file = parser.option_argument("dot");
-    options.max_workers = number_of_threads();
-    if (parser.has_option("lace-dqsize"))
-    {
-      lace_dqsize = parser.option_argument_as<int>("lace-dqsize");
-    }
-    if (parser.has_option("lace-stacksize"))
-    {
-      lace_stacksize = parser.option_argument_as<int>("lace-stacksize");
-    }
-    if (parser.has_option("memory-limit"))
-    {
-      memory_limit = parser.option_argument_as<std::size_t>("memory-limit");
-    }
-    if (parser.has_option("initial-ratio"))
-    {
-      initial_ratio = parser.option_argument_as<std::size_t>("initial-ratio");
-      if (!utilities::is_power_of_two(initial_ratio))
-      {
-        throw mcrl2::runtime_error("The initial-ratio should be a power of two.");
-      }
-    }
-    if (parser.has_option("table-ratio"))
-    {
-      table_ratio = parser.option_argument_as<std::size_t>("table-ratio");
-      if (!utilities::is_power_of_two(table_ratio))
-      {
-        throw mcrl2::runtime_error("The table-ratio should be a power of two.");
-      }
-    }
-
-    if (parser.has_option("split-conditions"))
-    {
-      options.split_conditions = 1;
-    }
-
-    if (parser.has_option("split-conditions-unsafe"))
-    {
-      options.split_conditions = parser.option_argument_as<std::size_t>("split-conditions-unsafe");
-    }
-
-    options.solve_strategy = parser.option_argument_as<int>("solve-strategy");
-    if (options.solve_strategy > 7)
-    {
-      throw mcrl2::runtime_error("Invalid strategy " + std::to_string(options.solve_strategy));
-    }
-
-    if (parser.has_option("max-iterations"))
-    {
-      options.max_iterations = parser.option_argument_as<std::size_t>("max-iterations");
-    }
-
-    if (parser.has_option("file"))
-    {
-      std::string filename = parser.option_argument("file");
-      if (mcrl2::utilities::file_extension(filename) == "lps")
-      {
-        lpsfile = filename;
-      }
-      else
-      {
-        ltsfile = filename;
-      }
-    }
-
-    if (parser.has_option("evidence-file"))
-    {
-      if (!parser.has_option("file"))
-      {
-        throw mcrl2::runtime_error("Option --evidence-file cannot be used without option --file");
-      }
-      evidence_file = parser.option_argument("evidence-file");
-    }
-
-    if (parser.has_option("structure-graph-out"))
-    {
-      structure_graph_file = parser.option_argument("structure-graph-out");
-    }
-
-    if (options.check_strategy)
-    {
-      if (options.summand_groups.compare("none") != 0)
-      {
-        throw mcrl2::runtime_error("Cannot check strategy for merged summand groups");
-      }
-      options.compute_strategy = true;
-    }
+    pbes_system::parse_pbessolvesymbolic_options(parser, m_settings);
   }
 
 public:
@@ -727,22 +477,22 @@ public:
 
   bool run() override
   {
-    lace_set_stacksize(lace_stacksize * 1024 * 1024 * 1024);
-    lace_start(number_of_threads(), lace_dqsize);
-    sylvan::sylvan_set_limits(memory_limit * 1024 * 1024 * 1024,
-      static_cast<int>(std::log2(table_ratio)),
-      static_cast<int>(std::log2(initial_ratio)));
+    lace_set_stacksize(m_settings.runtime.lace_stacksize * 1024 * 1024 * 1024);
+    lace_start(m_settings.runtime.threads.value_or(number_of_threads()), m_settings.runtime.lace_dqsize);
+    sylvan::sylvan_set_limits(m_settings.runtime.memory_limit * 1024 * 1024 * 1024,
+      static_cast<int>(std::log2(m_settings.runtime.table_ratio)),
+      static_cast<int>(std::log2(m_settings.runtime.initial_ratio)));
     sylvan::sylvan_init_package();
     sylvan::sylvan_init_ldd();
     sylvan::ldds::initialise();
 
-    auto args = arguments{.options = options,
+    auto args = arguments{.options = m_settings.reach,
       .input_filename = input_filename(),
       .output_filename = output_filename(),
-      .evidence_filename = evidence_file,
-      .structure_graph_filename = structure_graph_file,
-      .lpsfile = lpsfile,
-      .ltsfile = ltsfile,
+      .evidence_filename = m_settings.child.evidence_file,
+      .structure_graph_filename = m_settings.child.structure_graph_file,
+      .lpsfile = m_settings.child.lpsfile,
+      .ltsfile = m_settings.child.ltsfile,
       .timer = timer()};
     pbessolvesymbolic_task(&args);
 

@@ -24,6 +24,7 @@
 #include "mcrl2/pbes/detail/instantiate_global_variables.h"
 #include "mcrl2/pbes/pbes_equation_index.h"
 #include "mcrl2/pbes/pbesreach.h"
+#include "mcrl2/pbes/pbesreach_partial.h"
 #include "mcrl2/pbes/symbolic_pbessolve.h"
 #include "mcrl2/utilities/logger.h"
 
@@ -32,7 +33,9 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace mcrl2::pbes_system::detail
@@ -55,7 +58,9 @@ public:
   explicit sylvan_runtime(std::size_t threads = 1,
     std::size_t memory_limit_gb = 3,
     std::size_t initial_ratio = 16,
-    std::size_t table_ratio = 1)
+    std::size_t table_ratio = 1,
+    std::size_t lace_dqsize = 1024 * 1024 * 4,
+    std::size_t lace_stacksize_gb = 0)
   {
     static bool s_started = false;
     if (s_started)
@@ -64,7 +69,8 @@ public:
     }
     s_started = true;
 
-    lace_start(threads, 1024 * 1024 * 4);
+    lace_set_stacksize(lace_stacksize_gb * 1024 * 1024 * 1024);
+    lace_start(threads, lace_dqsize);
     sylvan::sylvan_set_limits(memory_limit_gb * 1024 * 1024 * 1024,
       static_cast<int>(std::log2(table_ratio)),
       static_cast<int>(std::log2(initial_ratio)));
@@ -108,49 +114,64 @@ class symbolic_approximation
   using ldd = sylvan::ldds::ldd;
 
   symbolic_reachability_options m_options;
-  pbesreach_algorithm m_reach;
+  std::unique_ptr<pbesreach_algorithm> m_reach;
   std::optional<symbolic_parity_game> m_game;
   symbolic_solution_t m_solution;
   bool m_result = false;
   bool m_found = false;
 
+  // Solve strategies 1-7 use the partial solving reach algorithm.
+  static std::unique_ptr<pbesreach_algorithm> make_reach_algorithm(const srf_pbes& srf,
+    const symbolic_reachability_options& options)
+  {
+    if (options.solve_strategy != 0)
+    {
+      return std::make_unique<pbesreach_algorithm_partial>(srf, options);
+    }
+    return std::make_unique<pbesreach_algorithm>(srf, options);
+  }
+
 public:
   symbolic_approximation(const pbes& p, const symbolic_reachability_options& options)
     : m_options(options),
-      m_reach(make_srf_pbes(p, m_options), m_options),
+      m_reach(make_reach_algorithm(make_srf_pbes(p, m_options), m_options)),
       m_solution(true)
   {
-    m_reach.run();
+    m_reach->run();
 
-    ldd V = sylvan::ldds::union_(m_reach.V(), m_reach.I());
-    m_game.emplace(m_reach.pbes(),
-      m_reach.summand_groups(),
-      m_reach.data_index(),
+    ldd V = sylvan::ldds::union_(m_reach->V(), m_reach->I());
+    if (!m_options.dot_file.empty())
+    {
+      sylvan::ldds::print_dot(m_options.dot_file, V);
+    }
+    m_game.emplace(m_reach->pbes(),
+      m_reach->summand_groups(),
+      m_reach->data_index(),
       V,
       m_options.no_relprod,
       m_options.chaining,
       true);
 
     symbolic_pbessolve_algorithm solver(*m_game, m_options.check_strategy, true);
-    if (m_reach.I() == sylvan::ldds::empty_set())
+    if (m_reach->I() == sylvan::ldds::empty_set())
     {
       std::tie(m_result, m_solution)
-        = solver.solve(m_reach.initial_state(), V, m_reach.deadlocks(), m_reach.partial_solution());
+        = solver.solve(m_reach->initial_state(), V, m_reach->deadlocks(), m_reach->partial_solution());
       m_found = true;
     }
     else
     {
-      m_solution = solver.partial_solve(m_reach.initial_state(),
+      m_solution = solver.partial_solve(m_reach->initial_state(),
         V,
-        m_reach.I(),
-        m_reach.deadlocks(),
-        m_reach.partial_solution());
-      if (sylvan::ldds::includes(m_solution.winning[0], m_reach.initial_state()))
+        m_reach->I(),
+        m_reach->deadlocks(),
+        m_reach->partial_solution());
+      if (sylvan::ldds::includes(m_solution.winning[0], m_reach->initial_state()))
       {
         m_result = true;
         m_found = true;
       }
-      else if (sylvan::ldds::includes(m_solution.winning[1], m_reach.initial_state()))
+      else if (sylvan::ldds::includes(m_solution.winning[1], m_reach->initial_state()))
       {
         m_result = false;
         m_found = true;
@@ -159,7 +180,13 @@ public:
 
     if (!m_found)
     {
-      throw mcrl2::runtime_error("in-process symbolic solve did not determine the initial vertex");
+      std::string message = "in-process symbolic solve did not determine the initial vertex";
+      if (m_options.max_iterations != 0)
+      {
+        message += "; exploration was limited to " + std::to_string(m_options.max_iterations)
+                   + " iterations by --max-iterations";
+      }
+      throw mcrl2::runtime_error(message);
     }
   }
 
@@ -169,11 +196,11 @@ public:
   }
   pbesreach_algorithm& reach()
   {
-    return m_reach;
+    return *m_reach;
   }
   const pbesreach_algorithm& reach() const
   {
-    return m_reach;
+    return *m_reach;
   }
   const symbolic_solution_t& solution() const
   {

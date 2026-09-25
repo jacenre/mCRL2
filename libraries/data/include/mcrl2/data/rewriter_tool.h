@@ -16,6 +16,47 @@
 #include "mcrl2/data/rewriter.h"
 #include "mcrl2/utilities/command_line_interface.h"
 
+namespace mcrl2::data
+{
+
+/// \brief Adds the -r/--rewriter and -Q/--qlimit options to an interface description.
+inline void add_rewriter_options(mcrl2::utilities::interface_description& desc, bool suppress_jittyp = false)
+{
+  mcrl2::utilities::interface_description::enum_argument<rewrite_strategy> rewriter_option("NAME");
+  rewriter_option.add_value(jitty, true);
+#ifdef MCRL2_ENABLE_JITTYC
+  rewriter_option.add_value(jitty_compiling);
+#endif
+  if (!suppress_jittyp)
+  {
+    rewriter_option.add_value(jitty_prover);
+  }
+
+  desc.add_option("rewriter", rewriter_option, "use rewrite strategy NAME:", 'r');
+
+  desc.add_option("qlimit",
+    mcrl2::utilities::make_mandatory_argument("NUM"),
+    "limit enumeration of universal and existential quantifiers in data expressions to NUM iterations (default NUM=10, "
+    "NUM=0 for unlimited).",
+    'Q');
+}
+
+inline rewrite_strategy parse_rewriter_option(const mcrl2::utilities::command_line_parser& parser)
+{
+  return parser.option_argument_as<rewrite_strategy>("rewriter");
+}
+
+inline void parse_qlimit_option(const mcrl2::utilities::command_line_parser& parser)
+{
+  if (parser.options.count("qlimit"))
+  {
+    const std::size_t qlimit = parser.option_argument_as<std::size_t>("qlimit");
+    mcrl2::data::detail::set_enumerator_iteration_limit(qlimit == 0 ? std::numeric_limits<std::size_t>::max() : qlimit);
+  }
+}
+
+} // namespace mcrl2::data
+
 namespace mcrl2::data::tools
 {
 
@@ -36,31 +77,7 @@ class rewriter_tool: public Tool
     void add_options(utilities::interface_description& desc, bool suppress_jittyp)
     {
       Tool::add_options(desc);
-
-      utilities::interface_description::enum_argument<data::rewrite_strategy> rewriter_option("NAME");
-      rewriter_option.add_value(data::jitty, true);
-#ifdef MCRL2_ENABLE_JITTYC
-      rewriter_option.add_value(data::jitty_compiling);
-#endif
-      if (!suppress_jittyp)
-      {
-        rewriter_option.add_value(data::jitty_prover);
-      }
-
-      desc.add_option(
-        "rewriter", 
-        rewriter_option,
-        "use rewrite strategy NAME:"
-        ,'r'
-      );
-
-      desc.add_option(
-        "qlimit", 
-        utilities::make_mandatory_argument("NUM"),
-        "limit enumeration of universal and existential quantifiers in data expressions to NUM iterations (default NUM=10, NUM=0 for unlimited).",
-        'Q'
-      );
-
+      mcrl2::data::add_rewriter_options(desc, suppress_jittyp);
     }
 
     /// \brief Add options to an interface description. Also includes
@@ -73,7 +90,7 @@ class rewriter_tool: public Tool
     void parse_options(const utilities::command_line_parser& parser) override
     {
       Tool::parse_options(parser);
-      m_rewrite_strategy = parser.option_argument_as< data::rewrite_strategy >("rewriter");
+      m_rewrite_strategy = mcrl2::data::parse_rewriter_option(parser);
 
       //Set enumerator limit for quantifier enumeration
       if (parser.options.count("qlimit"))

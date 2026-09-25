@@ -42,7 +42,7 @@ void test_result(std::string input, std::string expected_result, bool option_che
   std::cout << replace_whitespace(result) << std::endl;
   std::cout << replace_whitespace(expected_result) << std::endl;
   // TODO: enable after fixing the implementation
-  // BOOST_CHECK(replace_whitespace(result) == replace_whitespace(expected_result));
+  BOOST_CHECK(replace_whitespace(result) == replace_whitespace(expected_result));
 }
 
 BOOST_AUTO_TEST_CASE(test_fixpointsolve)
@@ -52,7 +52,7 @@ BOOST_AUTO_TEST_CASE(test_fixpointsolve)
   text = "pbes nu X(n: Pos, b: Bool) = (val(!(n == 2)) && (X(2, b)) && (X(3, b)));"
          "init X(1, false);";
   expected_result = "pbes nu X(n: Pos, b: Bool) =\n"
-                    "     val(!(n == 2)) && val(false) && val(true);\n"
+                    "     val(false);\n"
                     "init X(1, false);\n";
 
   test_result(text, expected_result, false);
@@ -108,7 +108,7 @@ BOOST_AUTO_TEST_CASE(test_fixpointsolve)
                     "pbes nu Z(s3_P: Pos, s_P: Sluice, col_P1,col_P2: Colour) =\n"
                     "val(true);\n"
                     "nu X0(s3_P: Pos, s_P: Sluice, col_P1,col_P2: Colour) =\n"
-                    "(val(!(s_P == s1)) || val(!(s3_P == 2))) && (val(s_P == s1) || val(!(s3_P == 3)) || val(!(col_P1 == green))) && (val(!(s3_P == 2)) || val(!(if(s_P == s1, red, col_P1) == green))) && (val(!(s3_P == 1 && !(col_P1 == green))) || val(!(col_P1 == green))) && (val(!(s3_P == 1 && col_P1 == green)) || val(false)) && (val(!(s3_P == 1 && !(col_P2 == green))) || val(!(col_P1 == green))) && (val(!(s3_P == 1 && col_P2 == green)) || val(true)) && (val(!(s3_P == 1 && !(col_P1 == red))) || val(!(col_P1 == green))) && (val(!(s3_P == 1 && col_P1 == red)) || val(true)) && (val(!(s3_P == 1 && !(col_P2 == red))) || val(!(col_P1 == green))) && (val(!(s3_P == 1 && col_P2 == red)) || val(true));\n"
+                    "val((!(s_P == s1) || !(s3_P == 2)) && (s_P == s1 || !(s3_P == 3) || !(col_P1 == green)) && (!(s3_P == 2) || !(if(s_P == s1, red, col_P1) == green)) && (!(s3_P == 1 && !(col_P1 == green)) || !(col_P1 == green)) && !(s3_P == 1 && col_P1 == green) && (!(s3_P == 1 && !(col_P2 == green)) || !(col_P1 == green)) && (!(s3_P == 1 && !(col_P1 == red)) || !(col_P1 == green)) && (!(s3_P == 1 && !(col_P2 == red)) || !(col_P1 == green)));\n"
                     "\n"
                     "init Z(1, dc, red, red);\n";
   test_result(text, expected_result, false);

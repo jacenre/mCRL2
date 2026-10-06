@@ -225,6 +225,38 @@ BOOST_AUTO_TEST_CASE(test_flip_frozen_rulers_keeps_dynamic_ruler)
   BOOST_CHECK(!stats.counts[eq].contains(V("c")));
 }
 
+// A configured minimum ruling strength filters weak edges, while retaining
+// edges at the threshold. Strength is expressed as a percentage.
+BOOST_AUTO_TEST_CASE(test_minimum_ruling_strength)
+{
+  const core::identifier_string eq("Y");
+  ruling_percentages_type percentages;
+  percentages[eq][V("target")][V("weak")] = 0.499;
+  percentages[eq][V("target")][V("boundary")] = 0.5;
+  percentages[eq][V("target")][V("strong")] = 0.75;
+
+  const ruling_relation_type no_minimum = build_ruling_relation(percentages);
+  BOOST_REQUIRE(no_minimum.ruled_by.contains(eq));
+  BOOST_CHECK_EQUAL(no_minimum.ruled_by.at(eq).at(V("target")).size(), 3u);
+
+  const ruling_relation_type half_minimum = build_ruling_relation(percentages, 50.0);
+  BOOST_REQUIRE(half_minimum.ruled_by.contains(eq));
+  const auto& rulers = half_minimum.ruled_by.at(eq).at(V("target"));
+  BOOST_CHECK_EQUAL(rulers.size(), 2u);
+  BOOST_CHECK(!rulers.contains(V("weak")));
+  BOOST_CHECK(rulers.contains(V("boundary")));
+  BOOST_CHECK(rulers.contains(V("strong")));
+}
+
+BOOST_AUTO_TEST_CASE(test_minimum_ruling_strength_validation)
+{
+  pbes p = txt2pbes("pbes nu Y(a: Bool) = Y(!a); init Y(false);", false);
+  pbescegps_iterator iterator;
+  pbescegps_options options;
+  options.minimum_ruling_strength = 100.1;
+  BOOST_CHECK_THROW(iterator.run_cegps_algorithm(p, options), mcrl2::runtime_error);
+}
+
 // compute_tree_sizes tests
 
 // Chain C -> B -> A: A has two descendants, B has one, C has none.

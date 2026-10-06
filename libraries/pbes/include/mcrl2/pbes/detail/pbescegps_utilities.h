@@ -30,6 +30,7 @@
 #include "mcrl2/utilities/logger.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <functional>
@@ -125,6 +126,7 @@ struct pbescegps_options
                                                        // infinite quantifier
   bool rules_ideal = false; // if true, enforce the order-ideal invariant after each refinement step
   std::string ruling_file = ""; // if non-empty, write the ruling relation to this file as text
+  double minimum_ruling_strength = 0.0; // minimum percentage of changes that must be guarded by a ruler
   bool use_solution_cache = true; // if false, never reuse a previously solved approximation with the same remaining
                                   // parameters (pbesfindabs disables this so every set is solved independently)
 };
@@ -884,7 +886,8 @@ inline ruling_percentages_type compute_ruling_percentages(const ruling_statistic
 }
 
 // Keeps only the stronger direction of mutual pairs; ties broken by name.
-inline ruling_relation_type build_ruling_relation(const ruling_percentages_type& percentages)
+inline ruling_relation_type build_ruling_relation(const ruling_percentages_type& percentages,
+  const double minimum_ruling_strength = 0.0)
 {
   ruling_relation_type relation;
 
@@ -895,6 +898,11 @@ inline ruling_relation_type build_ruling_relation(const ruling_percentages_type&
     {
       for (const auto& [d_j, pct_j]: rulers_percentages)
       {
+        if (pct_j * 100.0 < minimum_ruling_strength)
+        {
+          continue;
+        }
+
         auto ruled_it = eq_percentages.find(d_j);
         if (ruled_it != eq_percentages.end())
         {
@@ -1141,13 +1149,20 @@ inline void save_ruling_relation(const ruling_relation_type& relation, const std
 // Mutual pairs are pruned to the stronger direction, cycles are broken, and
 // transitively implied edges are removed. Tree sizes are cached for the ruling
 // strategy.
-inline ruling_relation_type compute_ruling_relation(const pbes& p, const data::rewriter& datar)
+inline ruling_relation_type compute_ruling_relation(const pbes& p,
+  const data::rewriter& datar,
+  const double minimum_ruling_strength = 0.0)
 {
+  if (!std::isfinite(minimum_ruling_strength) || minimum_ruling_strength < 0.0 || minimum_ruling_strength > 100.0)
+  {
+    throw mcrl2::runtime_error("The minimum ruling strength must be between 0 and 100.");
+  }
+
   detail::ruling_statistics_type stats = detail::count_rulings(p, datar);
   detail::flip_frozen_rulers(stats);
   detail::log_ruling_statistics(stats);
   detail::ruling_percentages_type percentages = detail::compute_ruling_percentages(stats);
-  ruling_relation_type relation = detail::build_ruling_relation(percentages);
+  ruling_relation_type relation = detail::build_ruling_relation(percentages, minimum_ruling_strength);
   detail::break_ruling_cycles(p, percentages, relation);
   detail::remove_transitive_rulings(relation);
   relation.compute_tree_sizes();

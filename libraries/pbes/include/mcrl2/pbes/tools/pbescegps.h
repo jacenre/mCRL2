@@ -713,9 +713,9 @@ public:
   // direction with more transition occurrences is kept. Longer cycles are broken
   // afterwards by removing the edge ruling the most dominant node of the cycle,
   // so the final relation is a strict order (DAG).
-  void compute_ruling_relation(const pbes& p)
+  void compute_ruling_relation(const pbes& p, const double minimum_ruling_strength)
   {
-    m_ruling_relation = pbes_system::compute_ruling_relation(p, *m_datar);
+    m_ruling_relation = pbes_system::compute_ruling_relation(p, *m_datar, minimum_ruling_strength);
   }
 
   // Enforces the order-ideal invariant: abstracted gate → abstracted data.
@@ -912,6 +912,12 @@ public:
 
   bool run_cegps_algorithm(pbes& p, pbescegps_options options, abstract_param_state& final_state)
   {
+    if (!std::isfinite(options.minimum_ruling_strength) || options.minimum_ruling_strength < 0.0
+        || options.minimum_ruling_strength > 100.0)
+    {
+      throw mcrl2::runtime_error("The minimum ruling strength must be between 0 and 100.");
+    }
+
 #ifndef MCRL2_ENABLE_SYLVAN
     if (options.solve_symbolic_lazy)
     {
@@ -955,8 +961,7 @@ public:
       p = pbes2srf(p, true).to_pbes();
       // SRF reintroduces implications, which the abstraction rewriter rejects.
       algorithms::normalize(p);
-
-      compute_ruling_relation(p);
+      compute_ruling_relation(p, options.minimum_ruling_strength);
 
       if (!options.ruling_file.empty())
       {

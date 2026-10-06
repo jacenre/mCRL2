@@ -101,6 +101,7 @@ protected:
     m_options.number_of_threads = number_of_threads();
     m_options.initial_state_file = parser.option_argument_as<std::string>("initial-state");
     m_options.ruling_file = parser.option_argument("ruling");
+    m_options.minimum_ruling_strength = parser.option_argument_as<double>("minimum-ruling-strength");
 
     m_options.var_choice = parser.option_argument_as<var_choice_strategy>("var-choice");
   }
@@ -169,6 +170,10 @@ protected:
         .add_value_desc(var_choice_strategy::ruling,
           "Prioritize based on the ruled-by ordering: pick the variable that rules the most others."),
       "Choose the method of choosing a variable on iteration.");
+    desc.add_option("minimum-ruling-strength",
+      utilities::make_optional_argument("PERCENT", "0"),
+      "Require a ruler to guard at least this percentage of a parameter's changes before adding a ruling edge. "
+      "The value must be between 0 and 100; the default is 0.");
     desc.add_option("initial-state",
       utilities::make_mandatory_argument("FILE"),
       "Read the initial set of abstracted parameters from FILE instead of abstracting all parameters. FILE contains "

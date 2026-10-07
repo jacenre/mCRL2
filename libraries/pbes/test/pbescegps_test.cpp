@@ -66,6 +66,37 @@ static pbescegps_options default_options()
   return opts;
 }
 
+BOOST_AUTO_TEST_CASE(test_remaining_parameter_cache_key_preserves_order)
+{
+  pbes first = txt2pbes("pbes nu X(a: Bool, b: Bool) = val(a); init X(false, true);");
+  pbes reordered = txt2pbes("pbes nu X(b: Bool, a: Bool) = val(a); init X(true, false);");
+  pbescegps_iterator iterator;
+
+  const auto first_parameters = iterator.compute_remaining_parameters(first);
+  const auto reordered_parameters = iterator.compute_remaining_parameters(reordered);
+  const core::identifier_string equation_name("X");
+
+  const std::set<data::variable> first_parameter_set(first_parameters.at(equation_name).begin(),
+    first_parameters.at(equation_name).end());
+  const std::set<data::variable> reordered_parameter_set(reordered_parameters.at(equation_name).begin(),
+    reordered_parameters.at(equation_name).end());
+  BOOST_CHECK(first_parameter_set == reordered_parameter_set);
+  BOOST_CHECK(first_parameters.at(equation_name) != reordered_parameters.at(equation_name));
+}
+
+BOOST_AUTO_TEST_CASE(test_remaining_parameter_cache_key_preserves_equation_membership)
+{
+  pbes first = txt2pbes("pbes nu X(a: Bool, b: Bool) = val(a);"
+                        "mu Y(a: Bool) = val(a);"
+                        "init X(false, true);");
+  pbes second = txt2pbes("pbes nu X(a: Bool) = val(a);"
+                         "mu Y(a: Bool, b: Bool) = val(a);"
+                         "init X(false);");
+  pbescegps_iterator iterator;
+
+  BOOST_CHECK(iterator.compute_remaining_parameters(first) != iterator.compute_remaining_parameters(second));
+}
+
 // nu equation, no transitions: nothing abstracted.
 BOOST_AUTO_TEST_CASE(test_no_transitions)
 {
@@ -207,7 +238,7 @@ BOOST_AUTO_TEST_CASE(test_two_equations_shared_params)
   abstract_param_state final_state;
   BOOST_CHECK(!run_cegps(text, default_options(), final_state));
   BOOST_CHECK((abstracted_names(final_state, "Y") == std::set<std::string>{}));
-  BOOST_CHECK((abstracted_names(final_state, "X") == std::set<std::string>{"a"}));
+  BOOST_CHECK((abstracted_names(final_state, "X") == std::set<std::string>{}));
 }
 
 // Regression: the candidate PVI comparison in select_variable advanced the

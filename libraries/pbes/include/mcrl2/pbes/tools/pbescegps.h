@@ -42,6 +42,7 @@
 #include "mcrl2/pbes/pbesinst_structure_graph2.h"
 #include "mcrl2/pbes/propositional_variable.h"
 #include "mcrl2/pbes/rewrite.h"
+#include "mcrl2/pbes/rewriters/dataspec_prune_rewriter.h"
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -149,13 +150,15 @@ private:
 #endif
   std::optional<data::rewriter> m_datar;
 
-  // Cache of approximation results, keyed by the parameters remaining in each equation
-  // after simplification (constelm/parelm) together with the approximation type.
-  // If the same set of parameters remains again, the result and structure graph are
-  // reused without solving.
-  std::map<std::pair<std::map<core::identifier_string, std::set<data::variable>>, bool>,
-    std::pair<bool, structure_graph>>
-    m_solution_cache;
+  // Cache of approximation results, keyed by the ordered parameters remaining in
+  // each equation after simplification (constelm/parelm) together with the
+  // approximation type. Structure graph PVI arguments use this parameter order,
+  // so equations with the same parameter set in a different order are distinct.
+  using solution_cache_key = std::pair<std::map<core::identifier_string, std::vector<data::variable>>, bool>;
+  std::map<solution_cache_key, std::pair<bool, structure_graph>> m_solution_cache;
+#ifdef MCRL2_ENABLE_SYLVAN
+  std::map<solution_cache_key, std::shared_ptr<detail::symbolic_approximation>> m_lazy_solution_cache;
+#endif
 
   // Ruling relation: m_ruling_relation.ruled_by[X][dₘ] = { dⱼ | dⱼ ≽ dₘ in equation X },
   // with the tree sizes (number of (transitively) ruled parameters) per equation cached in
@@ -326,15 +329,15 @@ public:
     }
   }
 
-  // Computes, for each equation of the simplified PBES, the parameters that remain
-  // after simplification (constelm/parelm). These determine the effective abstraction
-  // state, so they are used as the cache key.
-  std::map<core::identifier_string, std::set<data::variable>> compute_remaining_parameters(const pbes& simplified)
+  // Computes, for each equation of the simplified PBES, the ordered parameters
+  // that remain after simplification (constelm/parelm). These determine the
+  // effective abstraction state and the argument order of structure graph PVIs.
+  std::map<core::identifier_string, std::vector<data::variable>> compute_remaining_parameters(const pbes& simplified)
   {
-    std::map<core::identifier_string, std::set<data::variable>> remaining_parameters;
+    std::map<core::identifier_string, std::vector<data::variable>> remaining_parameters;
     for (const pbes_equation& eq: simplified.equations())
     {
-      remaining_parameters[eq.variable().name()] = as_set(eq.variable().parameters());
+      remaining_parameters[eq.variable().name()] = as_vector(eq.variable().parameters());
     }
     return remaining_parameters;
   }
@@ -349,7 +352,8 @@ public:
     structure_graph& graph)
   {
     pbes p_approx = apply_abstraction_to_pbes(p, state, is_overapproximation, options);
-    std::map<core::identifier_string, std::set<data::variable>> remaining_parameters
+
+    std::map<core::identifier_string, std::vector<data::variable>> remaining_parameters
       = compute_remaining_parameters(p_approx);
 
     auto key = std::make_pair(remaining_parameters, is_overapproximation);
@@ -379,6 +383,42 @@ public:
     }
     return result;
   }
+
+#ifdef MCRL2_ENABLE_SYLVAN
+  std::shared_ptr<detail::symbolic_approximation> solve_approximation_lazy_cached(const pbes& p,
+    abstract_param_state& state,
+    bool is_overapproximation,
+    const pbescegps_options& options,
+    const symbolic_reachability_options& reach_options,
+    const data::rewriter* shared_rewriter)
+  {
+    pbes p_approx = apply_abstraction_to_pbes(p, state, is_overapproximation, options);
+    const solution_cache_key key = {compute_remaining_parameters(p_approx), is_overapproximation};
+    if (options.use_solution_cache)
+    {
+      auto cached = m_lazy_solution_cache.find(key);
+      if (cached != m_lazy_solution_cache.end())
+      {
+        mCRL2log(log::verbose) << "Using cached " << (is_overapproximation ? "over" : "under")
+                               << "-approximation with result: " << (cached->second->result() ? "TRUE" : "FALSE")
+                               << std::endl;
+        mCRL2log(log::verbose) << "Remaining parameters:" << std::endl;
+        for (const auto& [eq_name, variables]: key.first)
+        {
+          mCRL2log(log::verbose) << "  " << eq_name << ": " << core::detail::print_list(variables) << std::endl;
+        }
+        return cached->second;
+      }
+    }
+
+    auto solver = std::make_shared<detail::symbolic_approximation>(p_approx, reach_options, shared_rewriter);
+    if (options.use_solution_cache)
+    {
+      m_lazy_solution_cache.emplace(key, solver);
+    }
+    return solver;
+  }
+#endif
 
   // Collects all parameters W = decl(E) from a PBES
   // This gathers all data variables that appear in PBES equations
@@ -506,7 +546,7 @@ public:
 
     mCRL2log(log::trace) << pp(result) << std::endl;
 
-    return result;
+    return dataspec_prune_rewriter()(result);
   }
 
   // Helper: Calculate non-Control Flow Parameters (CFP) per equation
@@ -808,19 +848,48 @@ public:
   }
 
   // Removes one parameter from one equation's abstraction set
-  void unabstract_one_parameter(const pbes& p, abstract_param_state& state, const pbescegps_options& options)
+  void unabstract_one_parameter(const pbes& p,
+    abstract_param_state& state,
+    const pbescegps_options& options,
+    const std::set<core::identifier_string>& graph_equations,
+    const std::optional<core::identifier_string>& priority_equation)
   {
     mCRL2log(log::verbose) << "Refinement strategy could not select a parameter; falling back to un-abstracting one "
                               "parameter."
                            << std::endl;
 
-    // First non-empty equation
-    bool found = false;
-    for (auto it = state.W.rbegin(); it != state.W.rend(); it++)
+    // Equation order is rank order, so reverse iteration visits the lowest
+    // equations first. Prefer the last equation matched during edge refinement,
+    // then graph equations, then the remaining equations.
+    std::vector<core::identifier_string> candidate_equations;
+    candidate_equations.reserve(p.equations().size());
+    if (priority_equation)
     {
-      if (!it->second.empty())
+      candidate_equations.push_back(*priority_equation);
+    }
+    for (const auto & it : std::ranges::reverse_view(p.equations()))
+    {
+      const core::identifier_string& eq_name = it.variable().name();
+      if (graph_equations.contains(eq_name) && (!priority_equation || eq_name != *priority_equation))
       {
-        core::identifier_string eq_name = it->first;
+        candidate_equations.push_back(eq_name);
+      }
+    }
+    for (const auto & it : std::ranges::reverse_view(p.equations()))
+    {
+      const core::identifier_string& eq_name = it.variable().name();
+      if (!graph_equations.contains(eq_name) && (!priority_equation || eq_name != *priority_equation))
+      {
+        candidate_equations.push_back(eq_name);
+      }
+    }
+
+    bool found = false;
+    for (const core::identifier_string& eq_name: candidate_equations)
+    {
+      auto abstraction_it = state.W.find(eq_name);
+      if (abstraction_it != state.W.end() && !abstraction_it->second.empty())
+      {
         auto eq_opt = detail::find_equation_by_name(p, eq_name);
         if (eq_opt)
         {
@@ -1038,16 +1107,14 @@ public:
       structure_graph under_graph;
       bool under_result = false;
 #ifdef MCRL2_ENABLE_SYLVAN
-      std::unique_ptr<detail::symbolic_approximation> under_solver;
+      std::shared_ptr<detail::symbolic_approximation> under_solver;
       std::unique_ptr<detail::lazy_symbolic_refinement_graph> under_lazy;
 #endif
       if (options.solve_symbolic_lazy)
       {
 #ifdef MCRL2_ENABLE_SYLVAN
-        under_solver
-          = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, false, options),
-            lazy_reach_options,
-            lazy_shared_rewriter);
+        under_solver = solve_approximation_lazy_cached(
+          p, state, false, options, lazy_reach_options, lazy_shared_rewriter);
         under_result = under_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -1071,16 +1138,14 @@ public:
       structure_graph over_graph;
       bool over_result = false;
 #ifdef MCRL2_ENABLE_SYLVAN
-      std::unique_ptr<detail::symbolic_approximation> over_solver;
+      std::shared_ptr<detail::symbolic_approximation> over_solver;
       std::unique_ptr<detail::lazy_symbolic_refinement_graph> over_lazy;
 #endif
       if (options.solve_symbolic_lazy)
       {
 #ifdef MCRL2_ENABLE_SYLVAN
-        over_solver
-          = std::make_unique<detail::symbolic_approximation>(apply_abstraction_to_pbes(p, state, true, options),
-            lazy_reach_options,
-            lazy_shared_rewriter);
+        over_solver = solve_approximation_lazy_cached(
+          p, state, true, options, lazy_reach_options, lazy_shared_rewriter);
         over_result = over_solver->result();
 #else
         throw mcrl2::runtime_error("lazy symbolic refinement requires MCRL2_ENABLE_SYLVAN");
@@ -1147,7 +1212,24 @@ public:
                              << " s" << std::endl;
       if (!refined)
       {
-        unabstract_one_parameter(p, state, options);
+        std::set<core::identifier_string> graph_equations;
+        if (options.solve_symbolic_lazy)
+        {
+#ifdef MCRL2_ENABLE_SYLVAN
+          graph_equations = under_lazy->equation_names();
+          const std::set<core::identifier_string> over_equations = over_lazy->equation_names();
+          graph_equations.insert(over_equations.begin(), over_equations.end());
+#endif
+        }
+        else
+        {
+          detail::structure_graph_refinement_graph under_view(under_graph);
+          detail::structure_graph_refinement_graph over_view(over_graph);
+          graph_equations = under_view.equation_names();
+          const std::set<core::identifier_string> over_equations = over_view.equation_names();
+          graph_equations.insert(over_equations.begin(), over_equations.end());
+        }
+        unabstract_one_parameter(p, state, options, graph_equations, refine.first_mismatch_equation());
       }
       make_data_closed(p, state);
       if (options.rules_ideal)

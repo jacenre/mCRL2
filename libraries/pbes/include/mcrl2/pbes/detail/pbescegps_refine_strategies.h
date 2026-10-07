@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <sstream>
 
 namespace mcrl2::pbes_system
 {
@@ -57,6 +58,7 @@ private:
   const pbescegps_options* m_options = nullptr;
   const data::rewriter* m_datar = nullptr;
   const ruling_relation_type* m_ruling_relation = nullptr;
+  std::optional<core::identifier_string> m_first_mismatch_equation;
 
   // Maps equation names to the vector of remaining parameters in each approximation
   // This is in the order they appear in the approximated equation
@@ -79,6 +81,22 @@ private:
     m_original_params.clear();
     m_var_count_cache.clear();
     m_common_parameter_indices.clear();
+    m_first_mismatch_equation.reset();
+  }
+
+  void record_first_mismatch_equation(const pbes_expression& formula)
+  {
+    const auto& pvi = atermpp::down_cast<propositional_variable_instantiation>(formula);
+    record_first_mismatch_equation(pvi.name());
+  }
+
+  void record_first_mismatch_equation(const core::identifier_string& equation_name)
+  {
+    if (!m_first_mismatch_equation)
+    {
+      m_first_mismatch_equation = equation_name;
+      mCRL2log(log::debug) << "First refinement mismatch in equation: " << *m_first_mismatch_equation << std::endl;
+    }
   }
 
   void initialize_parameters(const pbes& p, const pbes& under_pbes, const pbes& over_pbes)
@@ -115,6 +133,45 @@ private:
           indices.emplace_back(static_cast<std::size_t>(std::distance(under_params.begin(), under_it)),
             static_cast<std::size_t>(std::distance(over_params.begin(), over_it)));
         }
+      }
+    }
+  }
+
+  static std::vector<data::variable> build_unified_parameter_order(
+    const std::map<core::identifier_string, std::vector<data::variable>>& parameters)
+  {
+    std::vector<data::variable> result;
+    for (const auto& [name, equation_parameters]: parameters)
+    {
+      (void)name;
+      for (const data::variable& param: equation_parameters)
+      {
+        if (std::find(result.begin(), result.end(), param) == result.end())
+        {
+          result.push_back(param);
+        }
+      }
+    }
+    return result;
+  }
+
+  static void add_parameter_values(const std::vector<data::variable>& params,
+    const std::vector<data::data_expression>& values,
+    const std::vector<data::variable>& unified_params,
+    std::map<data::variable, data::data_expression>& result)
+  {
+    // Symbolic solving first unifies parameters across equations. A graph PVI
+    // can consequently contain arguments for parameters belonging to other
+    // equations, interleaved with this equation's parameters. Recreate the
+    // unified order used by pbesreach and use it to map graph arguments back.
+    for (const data::variable& param: params)
+    {
+      const auto it = std::find(unified_params.begin(), unified_params.end(), param);
+      if (it != unified_params.end())
+      {
+        const std::size_t value_index = static_cast<std::size_t>(std::distance(unified_params.begin(), it));
+        assert(value_index < values.size());
+        result.emplace(param, values[value_index]);
       }
     }
   }
@@ -183,31 +240,39 @@ private:
                                                    ? (!g_is_under ? m_under_params[var_name] : m_over_params[var_name])
                                                    : std::vector<data::variable>();
     std::vector<data::data_expression> pvi_values = atermpp::as_vector(pvi.parameters());
-    std::vector<data::data_expression> matching_pvi_values = matching_pvi.has_value()
-                                                               ? atermpp::as_vector(matching_pvi->parameters())
-                                                               : std::vector<data::data_expression>();
-    // Combine the under and over approximation parameters
-    std::size_t ig = 0, ig_prima = 0;
+    std::vector<data::data_expression> matching_pvi_values;
+    if (matching_pvi.has_value())
+    {
+      matching_pvi_values = atermpp::as_vector(matching_pvi->parameters());
+    }
+    std::map<data::variable, data::data_expression> g_values;
+    std::map<data::variable, data::data_expression> g_prime_values;
+    const auto& g_equation_parameters = g_is_under ? m_under_params : m_over_params;
+    const auto& g_prime_equation_parameters = g_is_under ? m_over_params : m_under_params;
+    add_parameter_values(g_params, pvi_values, build_unified_parameter_order(g_equation_parameters), g_values);
+    add_parameter_values(g_prime_params,
+      matching_pvi_values,
+      build_unified_parameter_order(g_prime_equation_parameters),
+      g_prime_values);
+
+    // Combine bindings from the two approximations by the original parameter
+    // names, not by assuming their reduced lists have the original ordering.
     for (const data::variable& param: m_original_params[var_name])
     {
       if (!state.W[var_name].contains(param))
       {
-        if (ig < g_params.size() && g_params[ig] == param)
+        if (auto it = g_values.find(param); it != g_values.end())
         {
-          sigma[param] = pvi_values[ig];
-          mCRL2log(log::debug) << "sigma[" << param << "] = " << pvi_values[ig] << " (regular)" << std::endl;
-          ++ig;
+          sigma[param] = it->second;
+          mCRL2log(log::debug) << "sigma[" << param << "] = " << it->second << " (regular)" << std::endl;
         }
-        if (ig_prima < g_prime_params.size() && g_prime_params[ig_prima] == param)
+        else if (auto it = g_prime_values.find(param); it != g_prime_values.end())
         {
-          sigma[param] = matching_pvi_values[ig_prima];
-          mCRL2log(log::trace) << "sigma[" << param << "] = " << matching_pvi_values[ig_prima] << " (matching)"
-                               << std::endl;
-          ++ig_prima;
+          sigma[param] = it->second;
+          mCRL2log(log::trace) << "sigma[" << param << "] = " << it->second << " (matching)" << std::endl;
         }
       }
     }
-    assert(ig == g_params.size() && ig_prima == g_prime_params.size());
 
     simplify_data_rewriter<data::rewriter> pbes_rewriter(*m_datar);
     pbes_expression instantiated_formula = pbes_rewrite(equation_formula, pbes_rewriter, sigma);
@@ -457,6 +522,18 @@ private:
       assert(
         primary.initial_vertex() != undefined_vertex() && "Initial vertex of the primary structure graph is undefined");
       std::set<index_type> visited;
+      std::optional<core::identifier_string> previous_common_equation;
+      auto record_mismatch = [this, &previous_common_equation](const pbes_expression& formula)
+      {
+        if (previous_common_equation)
+        {
+          record_first_mismatch_equation(*previous_common_equation);
+        }
+        else
+        {
+          record_first_mismatch_equation(formula);
+        }
+      };
       while (!todo.empty())
       {
         const index_type current_idx = *todo.begin();
@@ -479,6 +556,7 @@ private:
             mCRL2log(log::trace) << "Some index found " << matching_idx << std::endl;
             if (matching_idx == undefined_vertex())
             {
+              record_mismatch(current_vertex.formula());
               break;
             }
 
@@ -505,7 +583,8 @@ private:
               mCRL2log(log::trace) << " Index for other strat " << other_strategy_in_primary_idx << std::endl;
               if (other_strategy_in_primary_idx == undefined_vertex()
                   || !primary.has_edge(current_idx, other_strategy_in_primary_idx))
-              {
+              {             
+ 
                 mCRL2log(log::debug) << " found other edge for vertex " << current_vertex << std::endl;
                 if (select_variable(primary, current_idx, other, matching_idx, phase, primary_is_under))
                   return true;
@@ -538,8 +617,13 @@ private:
           {
             index_type matching_idx = find_vertex_index_by_formula(other, current_vertex.formula(), primary_is_under);
             mCRL2log(log::debug) << "Phase " << phase << " vertex " << current_vertex;
+            if (matching_idx == undefined_vertex())
+            {
+              record_mismatch(current_vertex.formula());
+            }
             if (matching_idx != undefined_vertex())
             {
+              mCRL2log(log::debug) << " found matching vertex " << other.find_vertex(matching_idx);
               const index_type strategy_match_idx
                 = find_vertex_index_by_formula(other, strategy_vertex.formula(), primary_is_under);
               mCRL2log(log::debug) << " trying other edge if " << strategy_match_idx << " is in "
@@ -561,6 +645,8 @@ private:
             todo.insert(strategy_idx);
           }
         }
+        previous_common_equation
+          = atermpp::down_cast<propositional_variable_instantiation>(current_vertex.formula()).name();
       }
       return false;
     };
@@ -572,6 +658,11 @@ private:
   }
 
 public:
+  const std::optional<core::identifier_string>& first_mismatch_equation() const
+  {
+    return m_first_mismatch_equation;
+  }
+
   bool refine_using_strategies(const pbes& p,
     const pbes& under_pbes,
     const pbes& over_pbes,
@@ -582,6 +673,7 @@ public:
     const data::rewriter& data_rewriter,
     const ruling_relation_type& ruling_relation)
   {
+    reset();
     if (under_graph.is_empty() || over_graph.is_empty())
     {
       mCRL2log(log::warning) << "Counterexample or witness information missing, falling back to random selection."
@@ -595,11 +687,19 @@ public:
     m_datar = &data_rewriter;
     m_ruling_relation = &ruling_relation;
 
-    reset();
     initialize_parameters(p, under_pbes, over_pbes);
     build_common_parameter_indices();
 
     mCRL2log(log::debug) << "Refining using strategies" << std::endl;
+    mCRL2log(log::debug) << "Under-approximation PBES:" << std::endl << pp(under_pbes) << std::endl;
+    mCRL2log(log::debug) << "Over-approximation PBES:" << std::endl << pp(over_pbes) << std::endl;
+    if (mCRL2logEnabled(log::debug))
+    {
+      std::ostringstream graph_dump;
+      graph_dump << "Under-approximation refinement graph:" << std::endl << under_graph << std::endl;
+      graph_dump << "Over-approximation refinement graph:" << std::endl << over_graph << std::endl;
+      mCRL2log(log::debug) << graph_dump.str();
+    }
 
     if (step_decorations(under_graph, over_graph, "dec-cex", true))
       return true;

@@ -400,6 +400,12 @@ public:
     return !sylvan::ldds::includes(m_region, m_reach.initial_state());
   }
 
+  void print(std::ostream& out, std::size_t max_vertices) const override
+  {
+    (void)max_vertices;
+    out << "  omitted (lazy symbolic graph is not materialized for debug output)" << std::endl;
+  }
+
   index_type initial_vertex() const override
   {
     return m_initial;
@@ -409,6 +415,19 @@ public:
   {
     expand(u);
     return m_vertices[u];
+  }
+
+  std::set<equation_name> equation_names() const override
+  {
+    std::set<equation_name> result;
+    for (const vertex& v: m_vertices)
+    {
+      if (is_propositional_variable_instantiation(v.formula()))
+      {
+        result.insert(atermpp::down_cast<propositional_variable_instantiation>(v.formula()).name());
+      }
+    }
+    return result;
   }
 
   bool has_edge(index_type from, index_type to) const override

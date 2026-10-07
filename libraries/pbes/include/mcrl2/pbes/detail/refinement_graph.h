@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <map>
+#include <ostream>
+#include <set>
 #include <vector>
 
 namespace mcrl2::pbes_system::detail
@@ -61,8 +63,9 @@ struct refinement_vertex
 
 inline std::ostream& operator<<(std::ostream& out, const refinement_vertex& v)
 {
-  out << "vertex(formula = " << v.formula() << ", decoration = " << static_cast<int>(v.decoration)
-      << ", rank = " << v.rank << ", strategy = " << v.strategy << ")";
+  out << "vertex(formula = " << v.formula() << ", decoration = " << v.decoration
+      << ", rank = " << v.rank << ", successors = " << core::detail::print_list(v.successors)
+      << ", strategy = " << v.strategy << ")";
   return out;
 }
 
@@ -77,6 +80,8 @@ struct refinement_vertex_record
 class refinement_graph
 {
 public:
+  static constexpr std::size_t max_printed_vertices = 1000;
+
   using index_type = structure_graph::index_type;
   using vertex = refinement_vertex;
 
@@ -85,11 +90,18 @@ public:
   /// \returns True if the graph has no vertices.
   virtual bool is_empty() const = 0;
 
+  /// Prints the graph, subject to a maximum size for implementations that can
+  /// determine their size without expanding the graph.
+  virtual void print(std::ostream& out, std::size_t max_vertices) const = 0;
+
   /// \returns The index of the initial vertex.
   virtual index_type initial_vertex() const = 0;
 
   /// \returns The vertex with the given index. Indices are stable per graph.
   virtual const vertex& find_vertex(index_type u) const = 0;
+
+  /// \returns The equation names represented by vertices in this graph view.
+  virtual std::set<equation_name> equation_names() const = 0;
 
   /// \returns True if the edge from \a from to \a to exists in this graph.
   virtual bool has_edge(index_type from, index_type to) const = 0;
@@ -99,6 +111,14 @@ public:
   ///          Positions refer to the equation parameter order.
   virtual index_type find_matching_vertex(const equation_name& name, const fixed_parameters& fixed_positions) const = 0;
 };
+
+/// Prints a refinement graph when it contains at most max_printed_vertices
+/// reachable vertices; larger graphs are summarized instead.
+inline std::ostream& operator<<(std::ostream& out, const refinement_graph& graph)
+{
+  graph.print(out, refinement_graph::max_printed_vertices);
+  return out;
+}
 
 /// \brief Refinement view backed by a fully materialised structure graph.
 class structure_graph_refinement_graph : public refinement_graph
@@ -122,6 +142,22 @@ public:
     return m_graph.is_empty();
   }
 
+  void print(std::ostream& out, std::size_t max_vertices) const override
+  {
+    if (m_graph.extent() > max_vertices)
+    {
+      out << "  omitted (more than " << max_vertices << " vertices)" << std::endl;
+      return;
+    }
+    for (index_type i = 0; i < m_graph.extent(); ++i)
+    {
+      if (m_graph.contains(i))
+      {
+        out << "  " << i << " " << find_vertex(i) << std::endl;
+      }
+    }
+  }
+
   index_type initial_vertex() const override
   {
     return m_graph.initial_vertex();
@@ -141,6 +177,20 @@ public:
       m_valid[u] = true;
     }
     return m_vertices[u];
+  }
+
+  std::set<equation_name> equation_names() const override
+  {
+    std::set<equation_name> result;
+    for (index_type i = 0; i < m_graph.extent(); ++i)
+    {
+      if (!m_graph.contains(i) || !is_propositional_variable_instantiation(m_graph.find_vertex(i).formula()))
+      {
+        continue;
+      }
+      result.insert(atermpp::down_cast<propositional_variable_instantiation>(m_graph.find_vertex(i).formula()).name());
+    }
+    return result;
   }
 
   bool has_edge(index_type from, index_type to) const override

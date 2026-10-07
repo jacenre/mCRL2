@@ -431,7 +431,7 @@ inline std::optional<data::variable> choose_variable_by_rhs_order(const pbes_exp
   const std::set<data::variable>& essential_vars)
 {
   const std::vector<data::variable> vars = find_free_variables_in_order(formula, data::variable_list(), false);
-  mCRL2log(log::debug) << "vars: " << core::detail::print_list(vars);
+  mCRL2log(log::debug) << "vars: " << core::detail::print_list(vars) << std::endl;
   for (const data::variable& var: vars)
   {
     if (essential_vars.contains(var))

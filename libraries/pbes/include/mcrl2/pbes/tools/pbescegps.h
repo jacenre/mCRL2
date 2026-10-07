@@ -810,7 +810,9 @@ public:
   // Removes one parameter from one equation's abstraction set
   void unabstract_one_parameter(const pbes& p, abstract_param_state& state, const pbescegps_options& options)
   {
-    mCRL2log(log::debug) << "Updating parameters for refinement..." << std::endl;
+    mCRL2log(log::verbose) << "Refinement strategy could not select a parameter; falling back to un-abstracting one "
+                              "parameter."
+                           << std::endl;
 
     // First non-empty equation
     bool found = false;

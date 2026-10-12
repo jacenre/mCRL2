@@ -319,13 +319,6 @@ private:
     }
 
     simplify_data_rewriter<data::rewriter> pbes_rewriter(*m_datar);
-    if (mCRL2logEnabled(log::debug))
-    {
-      const detail::pbes_expression_shape shape = detail::measure_pbes_expression_shape(equation_formula);
-      mCRL2log(log::debug) << "Rewriting equation " << var_name << " at " << current_vertex.formula() << ": "
-                           << shape.node_count << " PBES nodes, maximum depth " << shape.maximum_depth
-                           << ", maximum conjunction chain " << shape.maximum_conjunction_chain << std::endl;
-    }
     pbes_expression instantiated_formula = pbes_rewrite(equation_formula, pbes_rewriter, sigma);
     mCRL2log(log::debug) << "Phase " << phase << ": Instantiated " << current_vertex << std::endl
                          << "to " << instantiated_formula << std::endl;

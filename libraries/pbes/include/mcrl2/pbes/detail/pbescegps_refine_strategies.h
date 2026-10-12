@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <ostream>
 #include <sstream>
 
 namespace mcrl2::pbes_system
@@ -54,6 +55,8 @@ struct pbescegps_refine_strategies
 
 private:
   const pbes* m_p = nullptr;
+  const pbes* m_under_pbes = nullptr;
+  const pbes* m_over_pbes = nullptr;
   abstract_param_state* m_state = nullptr;
   const pbescegps_options* m_options = nullptr;
   const data::rewriter* m_datar = nullptr;
@@ -68,19 +71,29 @@ private:
   // Maps equation names to the original parameters for reference
   std::map<core::identifier_string, std::vector<data::variable>> m_original_params;
 
+  // Parameter orders used by the symbolic graphs, which unify the parameters
+  // of all equations into one argument list.
+  std::vector<data::variable> m_under_unified_params;
+  std::vector<data::variable> m_over_unified_params;
+
   std::map<core::identifier_string, std::map<data::variable, std::size_t>> m_var_count_cache;
 
-  // For each equation, records the positions of parameters retained in both
-  // approximations. Pairs are ordered by their original parameter position.
+  // For each equation, records the unified graph positions of parameters
+  // retained in both approximations. Pairs are (under position, over position).
   std::map<core::identifier_string, std::vector<std::pair<std::size_t, std::size_t>>> m_common_parameter_indices;
+  // Corresponding positions when the graph keeps equation-local parameter lists.
+  std::map<core::identifier_string, std::vector<std::pair<std::size_t, std::size_t>>> m_local_common_parameter_indices;
 
   void reset()
   {
     m_under_params.clear();
     m_over_params.clear();
     m_original_params.clear();
+    m_under_unified_params.clear();
+    m_over_unified_params.clear();
     m_var_count_cache.clear();
     m_common_parameter_indices.clear();
+    m_local_common_parameter_indices.clear();
     m_first_mismatch_equation.reset();
   }
 
@@ -119,6 +132,9 @@ private:
 
   void build_common_parameter_indices()
   {
+    m_under_unified_params = build_unified_parameter_order(m_under_params);
+    m_over_unified_params = build_unified_parameter_order(m_over_params);
+
     for (const auto& [name, original_params]: m_original_params)
     {
       const auto& under_params = m_under_params.at(name);
@@ -130,8 +146,17 @@ private:
         const auto over_it = std::find(over_params.begin(), over_params.end(), param);
         if (under_it != under_params.end() && over_it != over_params.end())
         {
-          indices.emplace_back(static_cast<std::size_t>(std::distance(under_params.begin(), under_it)),
-            static_cast<std::size_t>(std::distance(over_params.begin(), over_it)));
+          const auto local_under_index = static_cast<std::size_t>(std::distance(under_params.begin(), under_it));
+          const auto local_over_index = static_cast<std::size_t>(std::distance(over_params.begin(), over_it));
+          m_local_common_parameter_indices[name].emplace_back(local_under_index, local_over_index);
+
+          const auto under_graph_it = std::find(m_under_unified_params.begin(), m_under_unified_params.end(), param);
+          const auto over_graph_it = std::find(m_over_unified_params.begin(), m_over_unified_params.end(), param);
+          if (under_graph_it != m_under_unified_params.end() && over_graph_it != m_over_unified_params.end())
+          {
+            indices.emplace_back(static_cast<std::size_t>(std::distance(m_under_unified_params.begin(), under_graph_it)),
+              static_cast<std::size_t>(std::distance(m_over_unified_params.begin(), over_graph_it)));
+          }
         }
       }
     }
@@ -180,8 +205,11 @@ private:
   find_vertex_index_by_formula(const detail::refinement_graph& g, const pbes_expression& formula, bool find_in_over)
   {
     const auto& pvi = atermpp::down_cast<propositional_variable_instantiation>(formula);
-    const auto indices_it = m_common_parameter_indices.find(pvi.name());
-    if (indices_it == m_common_parameter_indices.end())
+    const bool unified_graph_parameters = m_options->solve_symbolic || m_options->solve_symbolic_lazy;
+    const auto& parameter_indices
+      = unified_graph_parameters ? m_common_parameter_indices : m_local_common_parameter_indices;
+    const auto indices_it = parameter_indices.find(pvi.name());
+    if (indices_it == parameter_indices.end())
     {
       return undefined_vertex();
     }
@@ -193,10 +221,19 @@ private:
       if (find_in_over)
       {
         // The formula comes from the under graph; the target is the over graph.
+        if (under_index >= args.size())
+        {
+          return undefined_vertex();
+        }
         fixed_positions.emplace_back(over_index, args[under_index]);
       }
       else
       {
+        // The formula comes from the over graph; the target is the under graph.
+        if (over_index >= args.size())
+        {
+          return undefined_vertex();
+        }
         fixed_positions.emplace_back(under_index, args[over_index]);
       }
     }
@@ -249,10 +286,17 @@ private:
     std::map<data::variable, data::data_expression> g_prime_values;
     const auto& g_equation_parameters = g_is_under ? m_under_params : m_over_params;
     const auto& g_prime_equation_parameters = g_is_under ? m_over_params : m_under_params;
-    add_parameter_values(g_params, pvi_values, build_unified_parameter_order(g_equation_parameters), g_values);
+    const bool unified_graph_parameters = m_options->solve_symbolic || m_options->solve_symbolic_lazy;
+    const auto& g_graph_parameters = unified_graph_parameters
+                                       ? (g_is_under ? m_under_unified_params : m_over_unified_params)
+                                       : g_equation_parameters.at(var_name);
+    const auto& g_prime_graph_parameters = unified_graph_parameters
+                                             ? (g_is_under ? m_over_unified_params : m_under_unified_params)
+                                             : g_prime_equation_parameters.at(var_name);
+    add_parameter_values(g_params, pvi_values, g_graph_parameters, g_values);
     add_parameter_values(g_prime_params,
       matching_pvi_values,
-      build_unified_parameter_order(g_prime_equation_parameters),
+      g_prime_graph_parameters,
       g_prime_values);
 
     // Combine bindings from the two approximations by the original parameter
@@ -275,9 +319,27 @@ private:
     }
 
     simplify_data_rewriter<data::rewriter> pbes_rewriter(*m_datar);
+    if (mCRL2logEnabled(log::debug))
+    {
+      const detail::pbes_expression_shape shape = detail::measure_pbes_expression_shape(equation_formula);
+      mCRL2log(log::debug) << "Rewriting equation " << var_name << " at " << current_vertex.formula() << ": "
+                           << shape.node_count << " PBES nodes, maximum depth " << shape.maximum_depth
+                           << ", maximum conjunction chain " << shape.maximum_conjunction_chain << std::endl;
+    }
     pbes_expression instantiated_formula = pbes_rewrite(equation_formula, pbes_rewriter, sigma);
     mCRL2log(log::debug) << "Phase " << phase << ": Instantiated " << current_vertex << std::endl
                          << "to " << instantiated_formula << std::endl;
+    if (mCRL2logEnabled(log::debug))
+    {
+      auto instantiated_under_pbes = detail::find_equation_by_name(*m_under_pbes, var_name)->get().formula();
+      auto instantiated_over_pbes = detail::find_equation_by_name(*m_over_pbes, var_name)->get().formula();
+      instantiated_under_pbes = pbes_rewrite(instantiated_under_pbes, pbes_rewriter, sigma);
+      instantiated_over_pbes = pbes_rewrite(instantiated_over_pbes, pbes_rewriter, sigma);
+      mCRL2log(log::debug) << "Under-approximation PBES with sigma:" << std::endl << pp(instantiated_under_pbes)
+                           << std::endl;
+      mCRL2log(log::debug) << "Over-approximation PBES with sigma:" << std::endl << pp(instantiated_over_pbes)
+                           << std::endl;
+    }
 
     std::set<data::variable> essential_vars = wit->second;
     pbes_expression guard_formula = instantiated_formula;
@@ -584,7 +646,6 @@ private:
               if (other_strategy_in_primary_idx == undefined_vertex()
                   || !primary.has_edge(current_idx, other_strategy_in_primary_idx))
               {             
- 
                 mCRL2log(log::debug) << " found other edge for vertex " << current_vertex << std::endl;
                 if (select_variable(primary, current_idx, other, matching_idx, phase, primary_is_under))
                   return true;
@@ -617,6 +678,7 @@ private:
           {
             index_type matching_idx = find_vertex_index_by_formula(other, current_vertex.formula(), primary_is_under);
             mCRL2log(log::debug) << "Phase " << phase << " vertex " << current_vertex;
+            mCRL2log(log::debug) << " with strategy to " << strategy_vertex << std::endl;
             if (matching_idx == undefined_vertex())
             {
               record_mismatch(current_vertex.formula());
@@ -682,6 +744,8 @@ public:
     }
 
     m_p = &p;
+    m_under_pbes = &under_pbes;
+    m_over_pbes = &over_pbes;
     m_state = &state;
     m_options = &options;
     m_datar = &data_rewriter;
@@ -691,8 +755,6 @@ public:
     build_common_parameter_indices();
 
     mCRL2log(log::debug) << "Refining using strategies" << std::endl;
-    mCRL2log(log::debug) << "Under-approximation PBES:" << std::endl << pp(under_pbes) << std::endl;
-    mCRL2log(log::debug) << "Over-approximation PBES:" << std::endl << pp(over_pbes) << std::endl;
     if (mCRL2logEnabled(log::debug))
     {
       std::ostringstream graph_dump;

@@ -140,6 +140,7 @@ private:
       const auto& under_params = m_under_params.at(name);
       const auto& over_params = m_over_params.at(name);
       auto& indices = m_common_parameter_indices[name];
+      m_local_common_parameter_indices.try_emplace(name);
       for (const data::variable& param: original_params)
       {
         const auto under_it = std::find(under_params.begin(), under_params.end(), param);

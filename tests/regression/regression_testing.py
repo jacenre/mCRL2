@@ -98,6 +98,24 @@ regression_tests = {
     'pfnf1'         : lambda name, settings: PbesrewrTest(name, [abspath('pfnf/1.txt')], 'pfnf', settings),
     }
 
+class PbescegpsChoicesTest(YmlTest):
+    # Compares the parameters that pbescegps un-abstracts in each refinement step, in order, with the
+    # reference sequence in pbescegps/<formula>.<var_choice>.choices. The variable choice strategy is
+    # passed to pbescegps (t10).
+    def __init__(self, name, inputfiles, formula, var_choice, settings):
+        with open(abspath('pbescegps/{}.{}.choices'.format(formula, var_choice))) as f:
+            expected = [line.rstrip('\n') for line in f if line.strip()]
+        settings = dict(settings)
+        settings['tools'] = {'t10': {'args': ['--var-choice={}'.format(var_choice)]}}
+        settings['result'] = "result = t9.value['solution'] is not None and t9.value['solution'] == t10.value['solution'] and t10.value['unabstracted'] == {}".format(expected)
+        super(PbescegpsChoicesTest, self).__init__(name, ymlfile('pbescegps-minisluice'), inputfiles, settings)
+
+# pbescegps must reach the verdict of pbessolve and the reference refinement sequence on the minisluice model,
+# for each variable choice strategy.
+for _formula in ['redgreen', 'redgreenboth', 'truered', 'simple']:
+    for _var_choice in ['rhs', 'ruling']:
+        regression_tests['pbescegps-minisluice-{}-{}'.format(_formula, _var_choice)] = lambda name, settings, formula = _formula, var_choice = _var_choice: PbescegpsChoicesTest(name, [abspath('pbescegps/minisluice.mcrl2'), abspath('pbescegps/{}.mcf'.format(formula))], formula, var_choice, settings)
+
 class PbessolvesymbolicEvidenceTest(YmlTest):
     # options are passed to the pbessolvesymbolic invocation (t3) of pbessolvesymbolic-evidence.yml
     def __init__(self, name, inputfiles, options, settings):

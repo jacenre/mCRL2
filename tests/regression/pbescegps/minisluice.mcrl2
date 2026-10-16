@@ -1,0 +1,12 @@
+sort Colour = struct red | green;
+     Sluice = struct s1 | s2;
+map  init_colour: Sluice -> Colour;
+var  s: Sluice;
+eqn  init_colour(s)=red;
+
+act  red_button, green_button, red, green: Sluice;
+proc P(col:Sluice -> Colour)=
+       sum s:Sluice. red_button(s).  (col(s)==green) -> red(s). P(col[s->red]) <> P(col) +
+       sum s:Sluice. green_button(s).(col(s)==red) -> green(s). P(col[s->green]) <> P(col);
+
+init  P(init_colour);

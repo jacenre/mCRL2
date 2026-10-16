@@ -216,6 +216,16 @@ class SolveTool(Tool):
             value = None
         self.value['solution'] = value
 
+class PbescegpsTool(SolveTool):
+    def __init__(self, label, name, toolpath, input_nodes, output_nodes, args):
+        super(PbescegpsTool, self).__init__(label, name, toolpath, input_nodes, output_nodes, args)
+
+    def assign_outputs(self):
+        super(PbescegpsTool, self).assign_outputs()
+        text = self.stdout + self.stderr
+        self.value['unabstracted'] = re.findall(r'^Un-abstracting (\S+) from (\S+)$', text, re.MULTILINE)
+        self.value['unabstracted'] = ['{} from {}'.format(param, eq) for param, eq in self.value['unabstracted']]
+
 class Lps2PbesTool(Tool):
     def __init__(self, label, name, toolpath, input_nodes, output_nodes, args):
         assert len(input_nodes) == 2
@@ -353,6 +363,8 @@ class ToolFactory(object):
             return Lts2LpsTool(label, name, toolpath, input_nodes, output_nodes, args)
         elif name in ['pbespgsolve', 'bessolve']:
             return SolveTool(label, name, toolpath, input_nodes, output_nodes, args)
+        elif name == 'pbescegps':
+            return PbescegpsTool(label, name, toolpath, input_nodes, output_nodes, args)
         elif name in ['pbessolve', 'pbessolve', 'pbessolvesymbolic', 'pbessymbolicbisim']:
             return PbesSolveTool(label, name, toolpath, input_nodes, output_nodes, args)
         elif name in ['pressolve']:

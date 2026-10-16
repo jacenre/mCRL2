@@ -1,0 +1,2 @@
+[true*] <true*.red(s2)>true
+% mu X. ([!red(s1)] X || <red(s1)>true)

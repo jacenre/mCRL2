@@ -1,0 +1,1 @@
+forall s: Sluice.[true*.red(s).!green(s)*.red(s)]false

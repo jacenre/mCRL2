@@ -1,0 +1,84 @@
+# Checks that pbescegps reaches the same verdict as pbessolve on the minisluice model, and that its
+# refinement chooses the same parameters, in the same order, as the reference sequence.
+#
+# The PBES is produced by the same pipeline as the one in the minisluice project (run1.sh): the
+# function-valued parameters are unfolded and the result is simplified with pbesstategraph and pbesrewr.
+# pbescegps does not yet account for counterexample equations, so lps2pbes is run without -c.
+
+nodes:
+  l1:
+    type: mcrl2
+  l2:
+    type: mcf
+  l3:
+    type: lps
+  l4:
+    type: lps
+  l5:
+    type: lps
+  l6:
+    type: pbes
+  l7:
+    type: pbes
+  l8:
+    type: pbes
+  l9:
+    type: pbes
+  l10:
+    type: pbes
+
+tools:
+  t1:
+    input: [l1]
+    output: [l3]
+    args: []
+    name: mcrl22lps
+  t2:
+    input: [l3]
+    output: [l4]
+    args: []
+    name: lpsfununfold
+  t3:
+    input: [l4]
+    output: [l5]
+    args: []
+    name: lpssuminst
+  t4:
+    input: [l5, l2]
+    output: [l6]
+    args: []
+    name: lps2pbes
+  t5:
+    input: [l6]
+    output: [l7]
+    args: []
+    name: pbesstategraph
+  t6:
+    input: [l7]
+    output: [l8]
+    args: []
+    name: pbesconstelm
+  t7:
+    input: [l8]
+    output: [l9]
+    args: []
+    name: pbesrewr
+  t8:
+    input: [l9]
+    output: [l10]
+    args: ['-ppfnf']
+    name: pbesrewr
+  t9:
+    input: [l10]
+    output: []
+    args: []
+    name: pbessolve
+  t10:
+    input: [l10]
+    output: []
+    args: ['-v']
+    name: pbescegps
+
+result: |
+  # Overridden per variable choice strategy by PbescegpsChoicesTest in regression_testing.py.
+  result = t9.value['solution'] is not None and t9.value['solution'] == t10.value['solution']

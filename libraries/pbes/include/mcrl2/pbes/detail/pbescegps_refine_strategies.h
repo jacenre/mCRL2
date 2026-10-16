@@ -181,25 +181,31 @@ private:
     return result;
   }
 
-  static void add_parameter_values(const std::vector<data::variable>& params,
-    const std::vector<data::data_expression>& values,
-    const std::vector<data::variable>& unified_params,
-    std::map<data::variable, data::data_expression>& result)
+  // Binds the arguments of a PVI taken from one of the structure graphs to the
+  // parameters of its equation. Arguments are never compared by position: the
+  // graph lists them in the unified order (symbolic solving), which interleaves
+  // the parameters of all equations, or in the equation-local reduced order.
+  std::map<data::variable, data::data_expression> bind_graph_arguments(
+    const propositional_variable_instantiation& pvi, bool is_under) const
   {
-    // Symbolic solving first unifies parameters across equations. A graph PVI
-    // can consequently contain arguments for parameters belonging to other
-    // equations, interleaved with this equation's parameters. Recreate the
-    // unified order used by pbesreach and use it to map graph arguments back.
-    for (const data::variable& param: params)
+    const bool unified_graph_parameters = m_options->solve_symbolic || m_options->solve_symbolic_lazy;
+    const std::vector<data::variable>& equation_params = (is_under ? m_under_params : m_over_params).at(pvi.name());
+    const std::vector<data::variable>& graph_params
+      = unified_graph_parameters ? (is_under ? m_under_unified_params : m_over_unified_params) : equation_params;
+    const std::vector<data::data_expression> values = atermpp::as_vector(pvi.parameters());
+
+    std::map<data::variable, data::data_expression> result;
+    for (const data::variable& param: equation_params)
     {
-      const auto it = std::find(unified_params.begin(), unified_params.end(), param);
-      if (it != unified_params.end())
+      const auto it = std::find(graph_params.begin(), graph_params.end(), param);
+      if (it != graph_params.end())
       {
-        const std::size_t value_index = static_cast<std::size_t>(std::distance(unified_params.begin(), it));
-        assert(value_index < values.size());
-        result.emplace(param, values[value_index]);
+        const auto index = static_cast<std::size_t>(std::distance(graph_params.begin(), it));
+        assert(index < values.size());
+        result.emplace(param, values[index]);
       }
     }
+    return result;
   }
 
   index_type
@@ -273,32 +279,10 @@ private:
     pbes_expression equation_formula = detail::find_equation_by_name(p, var_name)->get().formula();
 
     data::mutable_indexed_substitution sigma;
-    std::vector<data::variable> g_params(g_is_under ? m_under_params[var_name] : m_over_params[var_name]);
-    std::vector<data::variable> g_prime_params = matching_pvi.has_value()
-                                                   ? (!g_is_under ? m_under_params[var_name] : m_over_params[var_name])
-                                                   : std::vector<data::variable>();
-    std::vector<data::data_expression> pvi_values = atermpp::as_vector(pvi.parameters());
-    std::vector<data::data_expression> matching_pvi_values;
-    if (matching_pvi.has_value())
-    {
-      matching_pvi_values = atermpp::as_vector(matching_pvi->parameters());
-    }
-    std::map<data::variable, data::data_expression> g_values;
-    std::map<data::variable, data::data_expression> g_prime_values;
-    const auto& g_equation_parameters = g_is_under ? m_under_params : m_over_params;
-    const auto& g_prime_equation_parameters = g_is_under ? m_over_params : m_under_params;
-    const bool unified_graph_parameters = m_options->solve_symbolic || m_options->solve_symbolic_lazy;
-    const auto& g_graph_parameters = unified_graph_parameters
-                                       ? (g_is_under ? m_under_unified_params : m_over_unified_params)
-                                       : g_equation_parameters.at(var_name);
-    const auto& g_prime_graph_parameters = unified_graph_parameters
-                                             ? (g_is_under ? m_over_unified_params : m_under_unified_params)
-                                             : g_prime_equation_parameters.at(var_name);
-    add_parameter_values(g_params, pvi_values, g_graph_parameters, g_values);
-    add_parameter_values(g_prime_params,
-      matching_pvi_values,
-      g_prime_graph_parameters,
-      g_prime_values);
+    const std::map<data::variable, data::data_expression> g_values = bind_graph_arguments(pvi, g_is_under);
+    const std::map<data::variable, data::data_expression> g_prime_values
+      = matching_pvi.has_value() ? bind_graph_arguments(*matching_pvi, !g_is_under)
+                                 : std::map<data::variable, data::data_expression>();
 
     // Combine bindings from the two approximations by the original parameter
     // names, not by assuming their reduced lists have the original ordering.
@@ -342,58 +326,58 @@ private:
         || (matching_vertex.has_value() && matching_vertex->strategy != undefined_vertex()))
     {
       auto all_pvis = find_propositional_variable_instantiations(instantiated_formula);
-      const propositional_variable_instantiation succ_pvi
-        = current_vertex.strategy != undefined_vertex()
-            ? atermpp::down_cast<propositional_variable_instantiation>(g.find_vertex(current_vertex.strategy).formula())
-            : atermpp::down_cast<propositional_variable_instantiation>(
-                g_prime.find_vertex(matching_vertex->strategy).formula());
+      const bool succ_in_g = current_vertex.strategy != undefined_vertex();
+      const pbes_expression succ_formula = succ_in_g ? g.find_vertex(current_vertex.strategy).formula()
+                                                     : g_prime.find_vertex(matching_vertex->strategy).formula();
+      std::optional<propositional_variable_instantiation> succ_pvi;
+      std::map<data::variable, data::data_expression> succ_values;
+      if (is_propositional_variable_instantiation(succ_formula))
+      {
+        succ_pvi = atermpp::down_cast<propositional_variable_instantiation>(succ_formula);
+        succ_values = bind_graph_arguments(*succ_pvi, succ_in_g ? g_is_under : !g_is_under);
+      }
 
       std::set<propositional_variable_instantiation> candidate_pvis;
       for (const auto& candidate: all_pvis)
       {
-        if (candidate.name() != succ_pvi.name())
+        if (!succ_pvi || candidate.name() != succ_pvi->name())
         {
+          mCRL2log(log::trace) << "Rejected PVI " << candidate << ": no PVI successor with the same name" << std::endl;
           continue;
         }
 
+        // The candidate's arguments follow the original parameter order of its equation,
+        // so they are matched to the successor through the parameters they instantiate.
+        const std::vector<data::variable>& candidate_params = m_original_params.at(candidate.name());
+        const std::vector<data::data_expression> candidate_values = atermpp::as_vector(candidate.parameters());
+        assert(candidate_params.size() == candidate_values.size());
         bool matches = true;
-        auto cand_it = candidate.parameters().begin();
-        auto succ_it = succ_pvi.parameters().begin();
-        auto cand_end = candidate.parameters().end();
-        auto succ_end = succ_pvi.parameters().end();
-
-        for (const pbes_equation& equation: p.equations())
+        for (std::size_t i = 0; i < candidate_params.size() && matches; ++i)
         {
-          if (equation.variable().name() == candidate.name())
+          const data::variable& var = candidate_params[i];
+          if (state.W[candidate.name()].contains(var))
           {
-            for (const auto& param: equation.variable().parameters())
+            // Abstracted parameters have no counterpart in the successor PVI.
+            continue;
+          }
+          const auto succ_it = succ_values.find(var);
+          if (succ_it == succ_values.end())
+          {
+            // The successor's approximation does not carry this parameter, so there is nothing to compare.
+            continue;
+          }
+          const data::data_expression& cand_value = candidate_values[i];
+          if (find_free_variables(cand_value).empty())
+          {
+            data::data_expression eq_expr = data::lazy::equal_to(cand_value, succ_it->second);
+            data::data_expression rewritten = (*m_datar)(eq_expr);
+            if (rewritten != data::sort_bool::true_())
             {
-              if (cand_it == cand_end || succ_it == succ_end)
-              {
-                break;
-              }
-              data::variable var = atermpp::down_cast<data::variable>(param);
-              if (state.W[candidate.name()].contains(var))
-              {
-                // Abstracted parameters have no counterpart in the successor
-                // PVI, so the successor iterator must not be advanced for them.
-                ++cand_it;
-                continue;
-              }
-              if (find_free_variables(*cand_it).empty())
-              {
-                data::data_expression eq_expr = data::lazy::equal_to(*cand_it, *succ_it);
-                data::data_expression rewritten = (*m_datar)(eq_expr);
-                if (rewritten != data::sort_bool::true_())
-                {
-                  matches = false;
-                  break;
-                }
-              }
-              ++cand_it;
-              ++succ_it;
+              mCRL2log(log::debug) << "Rejected PVI " << candidate << ": parameter " << var.name()
+                                   << " differs from successor " << *succ_pvi << ": " << cand_value << " = "
+                                   << succ_it->second << " rewrites to " << rewritten << ", not true" << std::endl;
+              matches = false;
             }
-            break;
           }
         }
 

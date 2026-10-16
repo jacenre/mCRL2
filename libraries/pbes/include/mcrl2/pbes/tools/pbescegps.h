@@ -517,8 +517,6 @@ public:
       }
     }
 
-    mCRL2log(log::trace) << pp(result) << std::endl;
-
     // Rewrite expressions for simplification
     simplify_data_rewriter<data::rewriter> pbesr(*m_datar);
     pbes_rewrite(result, pbesr);
@@ -857,7 +855,6 @@ public:
     mCRL2log(log::verbose) << "Refinement strategy could not select a parameter; falling back to un-abstracting one "
                               "parameter."
                            << std::endl;
-
     // Equation order is rank order, so reverse iteration visits the lowest
     // equations first. Prefer the last equation matched during edge refinement,
     // then graph equations, then the remaining equations.

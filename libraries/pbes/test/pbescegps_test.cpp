@@ -293,6 +293,105 @@ BOOST_AUTO_TEST_CASE(test_select_variable_strategy_alignment)
   BOOST_CHECK((abstracted_names(state, "X") == std::set<std::string>{"p"}));
 }
 
+// A refinement graph given by hand. find_matching_vertex always returns the
+// configured index, so the matching vertex may belong to an equation that does
+// not exist in the approximation PBES (as happens with symbolic structure graphs
+// when simplification removes an equation).
+class fixed_refinement_graph : public detail::refinement_graph
+{
+public:
+  std::vector<detail::refinement_vertex> vertices;
+  index_type matching_index = 0;
+
+  bool is_empty() const override
+  {
+    return vertices.empty();
+  }
+
+  void print(std::ostream& out, std::size_t) const override
+  {
+    out << "fixed refinement graph with " << vertices.size() << " vertices";
+  }
+
+  index_type initial_vertex() const override
+  {
+    return 0;
+  }
+
+  const detail::refinement_vertex& find_vertex(index_type u) const override
+  {
+    return vertices.at(u);
+  }
+
+  std::set<core::identifier_string> equation_names() const override
+  {
+    return {core::identifier_string("X")};
+  }
+
+  bool has_edge(index_type, index_type) const override
+  {
+    return false;
+  }
+
+  index_type find_matching_vertex(const core::identifier_string&, const detail::fixed_parameters&) const override
+  {
+    return matching_index;
+  }
+};
+
+// Regression: select_variable looked up the equation of the matching vertex with
+// map::at, which throws std::out_of_range when that equation is not part of the
+// over-approximation PBES. The lookup must tolerate this and refinement must still
+// make progress.
+BOOST_AUTO_TEST_CASE(test_select_variable_matching_equation_missing_from_approximation)
+{
+  std::string text = "pbes nu X(p: Bool, q: Bool, n: Nat) ="
+                     "(val(p) || X(true, !q, 5))"
+                     " && (val(q) && (X(true, !q, 7) || (X(true, !q, 9) && val(n < 5))));"
+                     "init X(false, false, 0);";
+  pbes p = txt2pbes(text);
+  pbescegps_options opts = default_options();
+  pbescegps_iterator iterator;
+  iterator.initialize(p, opts);
+
+  abstract_param_state state;
+  const pbes_equation& eq = detail::find_equation_by_name(p, core::identifier_string("X"))->get();
+  const data::variable_list params = eq.variable().parameters();
+  state.add_abstracted_variable(p, core::identifier_string("X"), atermpp::down_cast<data::variable>(*params.begin()));
+  state.add_abstracted_variable(p,
+    core::identifier_string("X"),
+    atermpp::down_cast<data::variable>(*std::next(params.begin())));
+
+  // Under-approximation: a FALSE vertex for X. Over-approximation: its matching
+  // vertex is an equation Z that is not in the approximation PBES.
+  detail::refinement_vertex under_vertex;
+  under_vertex.m_formula = p.initial_state();
+  under_vertex.decoration = structure_graph::d_false;
+  under_vertex.rank = 0;
+  fixed_refinement_graph under_graph;
+  under_graph.vertices.push_back(under_vertex);
+
+  detail::refinement_vertex over_x_vertex;
+  over_x_vertex.m_formula = p.initial_state();
+  over_x_vertex.decoration = structure_graph::d_true;
+  over_x_vertex.rank = 0;
+  detail::refinement_vertex over_z_vertex;
+  over_z_vertex.m_formula = propositional_variable_instantiation(core::identifier_string("Z"), data::data_expression_list());
+  over_z_vertex.decoration = structure_graph::d_true;
+  over_z_vertex.rank = 0;
+  fixed_refinement_graph over_graph;
+  over_graph.vertices = {over_x_vertex, over_z_vertex};
+  over_graph.matching_index = 1;
+
+  pbes under_pbes = iterator.apply_abstraction_to_pbes(p, state, false, opts);
+  pbes over_pbes = iterator.apply_abstraction_to_pbes(p, state, true, opts);
+  data::rewriter datar(p.data(), opts.rewrite_strategy);
+  ruling_relation_type ruling;
+  pbescegps_refine_strategies refine;
+  BOOST_CHECK(refine.refine_using_strategies(p, under_pbes, over_pbes, state, opts, under_graph, over_graph, datar, ruling));
+  BOOST_CHECK(abstracted_names(state, "X").size() < 2);
+}
+
 // Checks that two structure graphs have the same vertices and edges.
 static void check_equal_structure_graph(const structure_graph& a, const structure_graph& b)
 {

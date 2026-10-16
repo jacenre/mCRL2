@@ -189,7 +189,14 @@ private:
     const propositional_variable_instantiation& pvi, bool is_under) const
   {
     const bool unified_graph_parameters = m_options->solve_symbolic || m_options->solve_symbolic_lazy;
-    const std::vector<data::variable>& equation_params = (is_under ? m_under_params : m_over_params).at(pvi.name());
+    const auto& params_by_equation = is_under ? m_under_params : m_over_params;
+    const auto equation_it = params_by_equation.find(pvi.name());
+    if (equation_it == params_by_equation.end())
+    {
+      // The equation is not part of this approximation (e.g. it was removed by simplification).
+      return {};
+    }
+    const std::vector<data::variable>& equation_params = equation_it->second;
     const std::vector<data::variable>& graph_params
       = unified_graph_parameters ? (is_under ? m_under_unified_params : m_over_unified_params) : equation_params;
     const std::vector<data::data_expression> values = atermpp::as_vector(pvi.parameters());
